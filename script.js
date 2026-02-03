@@ -1,4 +1,4 @@
-/* Version: #7 */
+/* Version: #8 */
 
 // === KONFIGURASJON ===
 const GameConfig = {
@@ -8,7 +8,7 @@ const GameConfig = {
     // Base
     baseX: 500,
     baseY: 550,
-    wallRadius: 220, // Økt litt for å få plass til mer
+    wallRadius: 220,
     wallSegments: 7,
     gateIndex: 3,    // Det midterste segmentet er porten
     // Fiender
@@ -24,7 +24,7 @@ const GameConfig = {
 
 // === SPILL-TILSTAND (STATE) ===
 let gameState = {
-    money: 400, // Litt startkapital for å teste systemet
+    money: 400,
     wave: 1,
     baseHealth: 100,
     isPaused: false,
@@ -40,8 +40,8 @@ let gameState = {
     units: [],
 
     // Styring
-    selectedUnit: null, // Hvilken soldat har vi klikket på?
-    isGateOpen: false   // Er porten åpen?
+    selectedUnit: null,
+    isGateOpen: false
 };
 
 // === DOM ELEMENTER ===
@@ -53,22 +53,20 @@ const uiGold = document.getElementById('gold-display');
 const uiBaseHp = document.getElementById('base-hp-display');
 const uiMessage = document.getElementById('status-message');
 
-// Legg til en knapp for porten dynamisk hvis den ikke finnes i HTML
-// (Eller vi kan gjenbruke en plassholder, men her lager jeg en lytter på en ny knapp vi later som er der, 
-// eller vi legger den til via JS for enkelhets skyld i denne omgang)
-
 // === INITIALISERING ===
 function init() {
     createLevelGeometry();
     setupEventListeners();
-    addGateControl(); // Legger til knapp for porten
+    addGateControl();
     requestAnimationFrame(gameLoop);
 }
 
 function addGateControl() {
-    // Vi legger til en knapp i kontrollpanelet via JS for å slippe å endre HTML hver gang
-    const panel = document.querySelector('.control-group:nth-child(3)'); // Spillkontroll-boksen
+    const panel = document.querySelector('.control-group:nth-child(3)');
     if (panel) {
+        // Sjekk om knappen allerede finnes for å unngå duplikater ved reload
+        if (document.getElementById('btn-toggle-gate')) return;
+
         const btn = document.createElement('button');
         btn.id = 'btn-toggle-gate';
         btn.className = 'game-btn';
@@ -101,33 +99,27 @@ function createLevelGeometry() {
             x: wx, y: wy,
             width: 60, height: 40,
             angle: angle,
-            hp: 100, maxHp: isGate ? 300 : 150, // Porten tåler mer
+            hp: 100, maxHp: isGate ? 300 : 150,
             isBroken: false,
             isGate: isGate,
             radius: 35
         };
         gameState.walls.push(wallSegment);
 
-        // --- SLOTS GENERERING (Nå flere per segment) ---
-        // Vi bruker en offset-vektor vinkelrett på vinkelen til muren for å spre slotene sideveis
-        
-        // Funksjon for å lage slots med offset
+        // --- SLOTS ---
         const createSlot = (type, distFromBase, offsetSide, label) => {
-            // Base posisjon (avstand fra sentrum)
             const bx = GameConfig.baseX + (GameConfig.wallRadius + distFromBase) * Math.cos(angle);
             const by = GameConfig.baseY + (GameConfig.wallRadius + distFromBase) * Math.sin(angle);
             
-            // Sideveis offset (for å få plass til 2 ved siden av hverandre)
-            // Vi finner tangent-vektoren ved å legge til 90 grader (PI/2) til vinkelen
             const sideAngle = angle + Math.PI / 2;
-            const sideDist = 15; // Hvor langt til siden
+            const sideDist = 15; 
             
             const finalX = bx + (offsetSide * sideDist) * Math.cos(sideAngle);
             const finalY = by + (offsetSide * sideDist) * Math.sin(sideAngle);
 
             gameState.slots.push({
                 id: `slot-${type}-${i}-${label}`,
-                type: type, // 'outside', 'wall', 'inside'
+                type: type,
                 parentWallId: wallSegment.id,
                 x: finalX,
                 y: finalY,
@@ -136,15 +128,10 @@ function createLevelGeometry() {
             });
         };
 
-        // Lag 2 slots UTE
         createSlot('outside', 60, -1, 'A');
         createSlot('outside', 60, 1, 'B');
-
-        // Lag 2 slots PÅ MUREN (Hvis det er port, kaller vi det "Gatehouse")
         createSlot('wall', 0, -1, 'A');
         createSlot('wall', 0, 1, 'B');
-
-        // Lag 2 slots INNE (Ved stigen)
         createSlot('inside', -60, -1, 'A');
         createSlot('inside', -60, 1, 'B');
     }
@@ -162,7 +149,6 @@ function setupEventListeners() {
     
     canvas.addEventListener('mousedown', handleCanvasClick);
     
-    // Høyreklikk for å avvelge
     canvas.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         deselectUnit();
@@ -176,7 +162,6 @@ function buyUnit(type) {
     if (gameState.money >= stats.cost) {
         gameState.money -= stats.cost;
         
-        // Spawn i borggården (litt tilfeldig rundt kongen)
         const spawnX = GameConfig.baseX + (Math.random() - 0.5) * 40;
         const spawnY = GameConfig.baseY + (Math.random() - 0.5) * 40;
 
@@ -185,21 +170,18 @@ function buyUnit(type) {
             type: type,
             x: spawnX,
             y: spawnY,
-            state: 'IDLE', // IDLE, MOVING, STATIONED, FIGHTING
+            state: 'IDLE', 
             targetSlot: null,
-            targetX: spawnX, // Brukes for bevegelse
+            targetX: spawnX,
             targetY: spawnY,
-            hp: 100, // Kan legge til HP på soldater senere
+            hp: 100,
             stats: stats,
             color: stats.color,
             attackLine: 0
         };
         
         gameState.units.push(newUnit);
-        
-        // Velg enheten automatisk slik at man kan flytte den med en gang
         selectUnit(newUnit);
-        
         updateUI();
         uiMessage.innerText = `${stats.name} rekruttert! Klikk på en hvit sirkel for å sende ham dit.`;
     } else {
@@ -225,40 +207,32 @@ function handleCanvasClick(event) {
     let clickedUnit = null;
     let clickedSlot = null;
 
-    // 1. Sjekk om vi traff en ENHET
     gameState.units.forEach(u => {
         const d = Math.sqrt((u.x - mouseX)**2 + (u.y - mouseY)**2);
         if (d < 15) clickedUnit = u;
     });
 
-    // 2. Sjekk om vi traff en SLOT
     gameState.slots.forEach(s => {
         const d = Math.sqrt((s.x - mouseX)**2 + (s.y - mouseY)**2);
         if (d < 12) clickedSlot = s;
     });
 
-    // --- LOGIKK FOR KLIKK ---
-
-    // Scenario A: Vi har valgt en soldat og klikker på en SLOT
     if (gameState.selectedUnit && clickedSlot) {
         moveUnitToSlot(gameState.selectedUnit, clickedSlot);
         return;
     }
 
-    // Scenario B: Vi klikker på en annen soldat
     if (clickedUnit) {
         selectUnit(clickedUnit);
         return;
     }
 
-    // Scenario C: Klikk i tomme lufta -> Avvelg
     if (!clickedUnit && !clickedSlot) {
         deselectUnit();
     }
 }
 
 function moveUnitToSlot(unit, slot) {
-    // Validering
     if (slot.occupied && slot.unit !== unit) {
         uiMessage.innerText = "Plassen er opptatt!";
         return;
@@ -269,23 +243,18 @@ function moveUnitToSlot(unit, slot) {
         return;
     }
 
-    // Frigjør gammel slot hvis han hadde en
     if (unit.targetSlot) {
         unit.targetSlot.occupied = false;
         unit.targetSlot.unit = null;
     }
 
-    // Reserver ny slot
     slot.occupied = true;
     slot.unit = unit;
     
-    // Oppdater enhetens mål
     unit.targetSlot = slot;
     unit.state = 'MOVING';
     
     uiMessage.innerText = `${unit.stats.name} flytter på seg...`;
-    
-    // Vi beholder valget slik at man kan flytte ham igjen hvis man angrer
 }
 
 function toggleGate() {
@@ -298,10 +267,20 @@ function toggleGate() {
     uiMessage.innerText = gameState.isGateOpen ? "Porten er ÅPEN!" : "Porten er LUKKET.";
 }
 
-// === SPILL-LOGIKK: UPDATE ===
+// === GAME LOOP (DENNE MANGLER I FORRIGE VERSJON!) ===
+function gameLoop(timestamp) {
+    const deltaTime = (timestamp - gameState.lastTime) / 1000;
+    gameState.lastTime = timestamp;
 
+    if (!gameState.isPaused) {
+        update(deltaTime);
+        draw();
+    }
+    requestAnimationFrame(gameLoop);
+}
+
+// === UPDATE ===
 function update(dt) {
-    // 1. Spawn Fiender
     if (gameState.gameActive && gameState.enemiesToSpawn > 0) {
         gameState.spawnTimer -= dt;
         if (gameState.spawnTimer <= 0) {
@@ -311,15 +290,12 @@ function update(dt) {
         }
     }
 
-    // 2. Oppdater Enheter (Bevegelse og Kamp)
     gameState.units.forEach(unit => updateUnit(unit, dt));
 
-    // 3. Oppdater Fiender
     for (let i = gameState.enemies.length - 1; i >= 0; i--) {
         updateEnemy(gameState.enemies[i], dt, i);
     }
 
-    // 4. Sjekk status
     if (gameState.gameActive && gameState.enemiesToSpawn === 0 && gameState.enemies.length === 0) {
         endWave();
     }
@@ -330,31 +306,25 @@ function update(dt) {
 }
 
 function updateUnit(unit, dt) {
-    // Cooldown
     if (unit.cooldownTimer > 0) unit.cooldownTimer -= dt;
     if (unit.attackLine > 0) unit.attackLine -= dt;
 
-    // --- BEVEGELSE ---
     if (unit.state === 'MOVING' && unit.targetSlot) {
         const dx = unit.targetSlot.x - unit.x;
         const dy = unit.targetSlot.y - unit.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
         
         if (dist < 5) {
-            // Fremme!
             unit.x = unit.targetSlot.x;
             unit.y = unit.targetSlot.y;
             unit.state = 'STATIONED';
         } else {
-            // Gå mot målet
             const speed = unit.stats.speed;
             unit.x += (dx / dist) * speed * dt;
             unit.y += (dy / dist) * speed * dt;
         }
     }
 
-    // --- KAMP ---
-    // Enheter kan slåss hvis de er STATIONED eller IDLE (i borggården)
     if (unit.state === 'STATIONED' || unit.state === 'IDLE') {
         let closestEnemy = null;
         let minDistance = Infinity;
@@ -371,7 +341,7 @@ function updateUnit(unit, dt) {
             if (unit.cooldownTimer <= 0) {
                 closestEnemy.hp -= unit.stats.damage;
                 unit.cooldownTimer = unit.stats.cooldown;
-                unit.targetX = closestEnemy.x; // For visuell effekt
+                unit.targetX = closestEnemy.x; 
                 unit.targetY = closestEnemy.y;
                 unit.attackLine = 0.1;
             }
@@ -387,23 +357,18 @@ function updateEnemy(enemy, dt, index) {
         return;
     }
 
-    // Finn målet (Basen)
     const dx = GameConfig.baseX - enemy.x;
     const dy = GameConfig.baseY - enemy.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
 
-    // Enkel State Machine for Fiende
     let canMove = true;
 
-    // 1. Sjekk kollisjon med Murer (hvis porten er lukket eller det ikke er porten)
     for (let w of gameState.walls) {
         if (!w.isBroken) {
-            // Hvis dette er porten og den er åpen -> Ignorer kollisjon
             if (w.isGate && gameState.isGateOpen) continue;
 
             const wDist = Math.sqrt((w.x - enemy.x)**2 + (w.y - enemy.y)**2);
             if (wDist < (w.radius + enemy.radius)) {
-                // Kollisjon! Angrip muren.
                 canMove = false;
                 enemy.attackTimer -= dt;
                 if (enemy.attackTimer <= 0) {
@@ -413,19 +378,17 @@ function updateEnemy(enemy, dt, index) {
                         w.hp = 0; w.isBroken = true;
                     }
                 }
-                break; // Angriper bare én vegg om gangen
+                break; 
             }
         }
     }
 
-    // 2. Bevegelse
     if (canMove) {
         if (dist > 30) {
             enemy.x += (dx / dist) * enemy.speed * dt;
             enemy.y += (dy / dist) * enemy.speed * dt;
         } else {
-            // Angrip Basen
-            gameState.baseHealth -= (enemy.damage * dt); // Skade over tid
+            gameState.baseHealth -= (enemy.damage * dt);
             updateUI();
         }
     }
@@ -485,34 +448,27 @@ function updateUI() {
 
 // === TEGNING ===
 function draw() {
-    // Bakgrunn
     ctx.fillStyle = "#27ae60"; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Basen (Kongen)
     ctx.fillStyle = "#8e44ad";
     ctx.beginPath(); ctx.arc(GameConfig.baseX, GameConfig.baseY, 25, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#fff"; ctx.font = "20px Arial"; ctx.fillText("♔", GameConfig.baseX, GameConfig.baseY);
 
-    // Murer
     gameState.walls.forEach(wall => {
         ctx.save();
         ctx.translate(wall.x, wall.y);
         ctx.rotate(wall.angle + Math.PI / 2);
 
-        // Tegn stige/trapp bak muren
-        ctx.fillStyle = "#8d6e63"; // Brun stige
+        ctx.fillStyle = "#8d6e63"; 
         ctx.fillRect(-10, 20, 20, 30); 
 
-        // Selve muren
         if (!wall.isBroken) {
             if (wall.isGate) {
-                // Port-grafikk
-                ctx.fillStyle = gameState.isGateOpen ? "#34495e" : "#5d4037"; // Mørk blå hvis åpen (skygge), brun hvis lukket
+                ctx.fillStyle = gameState.isGateOpen ? "#34495e" : "#5d4037"; 
             } else {
                 ctx.fillStyle = "#7f8c8d";
             }
             
-            // Hvis porten er åpen, tegn den "nede i bakken" (mindre synlig)
             if (wall.isGate && gameState.isGateOpen) {
                  ctx.strokeStyle = "#5d4037";
                  ctx.lineWidth = 2;
@@ -520,7 +476,6 @@ function draw() {
             } else {
                 ctx.fillRect(-wall.width / 2, -wall.height / 2, wall.width, wall.height);
                 ctx.strokeRect(-wall.width / 2, -wall.height / 2, wall.width, wall.height);
-                // HP Bar
                 const hpPercent = wall.hp / wall.maxHp;
                 ctx.fillStyle = "#00ff00"; ctx.fillRect(-wall.width/2, -5, wall.width * hpPercent, 5);
             }
@@ -537,10 +492,7 @@ function draw() {
         ctx.restore();
     });
 
-    // Slots
     gameState.slots.forEach(slot => {
-        // Skjul slots hvis vi ikke har valgt en enhet, ELLER hvis enheten allerede er i bevegelse til en annen slot
-        // MEN: Vis alltid slots som har en enhet i seg
         const showSlots = (gameState.selectedUnit && gameState.selectedUnit.state !== 'MOVING') || slot.unit;
         
         if (showSlots) {
@@ -548,11 +500,8 @@ function draw() {
             ctx.arc(slot.x, slot.y, 6, 0, Math.PI * 2);
             
             if (slot.unit) {
-                // Ikke tegn sirkelen hvis det står en enhet der, det blir rotete.
             } else {
-                // Tegn ledige slots
                 if (gameState.selectedUnit) {
-                     // Fargekod lovlighet
                      const isMelee = gameState.selectedUnit.stats.type === 'melee';
                      const illegal = (isMelee && slot.type === 'wall');
                      
@@ -564,17 +513,14 @@ function draw() {
         }
     });
 
-    // Enheter
     gameState.units.forEach(u => {
-        // Tegn sirkel
         ctx.beginPath();
         ctx.arc(u.x, u.y, 10, 0, Math.PI * 2);
         ctx.fillStyle = u.color;
         ctx.fill();
         
-        // Markering hvis valgt
         if (gameState.selectedUnit === u) {
-            ctx.strokeStyle = "#f1c40f"; // Gull ring
+            ctx.strokeStyle = "#f1c40f"; 
             ctx.lineWidth = 3;
             ctx.stroke();
             ctx.lineWidth = 1;
@@ -583,22 +529,18 @@ function draw() {
             ctx.stroke();
         }
 
-        // Type bokstav
         ctx.fillStyle = "#fff"; ctx.font = "12px Arial";
         ctx.fillText(u.stats.name.charAt(0), u.x, u.y);
 
-        // Angreps-strek
         if (u.attackLine > 0) {
             ctx.strokeStyle = "yellow"; ctx.lineWidth = 2; 
             ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.targetX, u.targetY); ctx.stroke();
         }
     });
 
-    // Fiender
     gameState.enemies.forEach(e => {
         ctx.fillStyle = e.color;
         ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2); ctx.fill();
-        // HP
         const hpPercent = e.hp / e.maxHp;
         ctx.fillStyle = "red"; ctx.fillRect(e.x-10, e.y-15, 20, 4);
         ctx.fillStyle = "#00ff00"; ctx.fillRect(e.x-10, e.y-15, 20*hpPercent, 4);
@@ -606,4 +548,4 @@ function draw() {
 }
 
 window.onload = init;
-/* Version: #7 */
+/* Version: #8 */
