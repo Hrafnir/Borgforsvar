@@ -1,0 +1,77 @@
+<!-- Version: #1 -->
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Middelalder Base-Forsvar</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="main-wrapper">
+        <!-- Overskrift -->
+        <header>
+            <h1>Forsvar Borgen!</h1>
+        </header>
+
+        <!-- Selve spillområdet (Lerretet) -->
+        <div id="canvas-container">
+            <canvas id="gameCanvas" width="1000" height="600"></canvas>
+        </div>
+
+        <!-- Informasjonslinje (Stats) -->
+        <div id="stats-bar">
+            <div class="stat-box">Bølge: <span id="wave-display">1</span></div>
+            <div class="stat-box">Penger: <span id="gold-display">100</span> Gull</div>
+            <div class="stat-box">Borg Helse: <span id="base-hp-display">100%</span></div>
+            <div class="stat-box">Beskjed: <span id="status-message">Velkommen, kommandant!</span></div>
+        </div>
+
+        <!-- Kontrollpanel / Butikk -->
+        <div id="controls-panel">
+            
+            <!-- Seksjon: Rekruttering -->
+            <div class="control-group">
+                <h3>Rekrutter Enheter</h3>
+                <button id="btn-buy-peasant" class="game-btn" title="Kjøp Fotsoldat (Nærkamp)">
+                    Fotsoldat (50g)
+                </button>
+                <button id="btn-buy-archer" class="game-btn" title="Kjøp Bueskytter (Avstand)">
+                    Bueskytter (100g)
+                </button>
+                <button id="btn-buy-knight" class="game-btn" title="Kjøp Ridder (Sterk Nærkamp)">
+                    Ridder (200g)
+                </button>
+            </div>
+
+            <!-- Seksjon: Oppgraderinger -->
+            <div class="control-group">
+                <h3>Borg & Forskning</h3>
+                <button id="btn-upgrade-wall" class="game-btn" title="Reparer og forsterk muren">
+                    Oppgrader Mur (150g)
+                </button>
+                <button id="btn-research-dmg" class="game-btn" title="Øk skaden til soldatene">
+                    Smie: Bedre Våpen (300g)
+                </button>
+            </div>
+
+            <!-- Seksjon: Spillkontroll -->
+            <div class="control-group">
+                <h3>Spillkontroll</h3>
+                <button id="btn-start-wave" class="game-btn action-btn">
+                    Start Neste Bølge!
+                </button>
+                <button id="btn-pause" class="game-btn">
+                    Pause
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Kobler til logikk-filen -->
+    <script src="script.js"></script>
+</body>
+</html>
+<!-- Version: #1 -->
