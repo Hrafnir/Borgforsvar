@@ -1,4 +1,4 @@
-/* Version: #8 */
+/* Version: #9 */
 
 // === KONFIGURASJON ===
 const GameConfig = {
@@ -10,15 +10,15 @@ const GameConfig = {
     baseY: 550,
     wallRadius: 220,
     wallSegments: 7,
-    gateIndex: 3,    // Det midterste segmentet er porten
+    gateIndex: 3,
     // Fiender
     enemySpawnInterval: 1000,
     baseEnemySpeed: 30,
-    // Enheter
+    // Enheter - MERK: Økt range på melee for å kunne slå gjennom muren
     units: {
-        peasant: { name: "Fotsoldat", cost: 50, damage: 10, range: 60, cooldown: 1.0, color: "#d35400", type: 'melee', speed: 60 },
-        archer:  { name: "Bueskytter", cost: 100, damage: 15, range: 250, cooldown: 1.5, color: "#27ae60", type: 'ranged', speed: 70 },
-        knight:  { name: "Ridder", cost: 200, damage: 40, range: 60, cooldown: 0.8, color: "#2980b9", type: 'melee', speed: 50 }
+        peasant: { name: "Fotsoldat", cost: 50, damage: 10, range: 100, cooldown: 1.0, color: "#d35400", type: 'melee', speed: 60 },
+        archer:  { name: "Bueskytter", cost: 100, damage: 15, range: 300, cooldown: 1.5, color: "#27ae60", type: 'ranged', speed: 70 },
+        knight:  { name: "Ridder", cost: 200, damage: 40, range: 100, cooldown: 0.8, color: "#2980b9", type: 'melee', speed: 50 }
     }
 };
 
@@ -39,7 +39,6 @@ let gameState = {
     enemies: [],
     units: [],
 
-    // Styring
     selectedUnit: null,
     isGateOpen: false
 };
@@ -64,9 +63,7 @@ function init() {
 function addGateControl() {
     const panel = document.querySelector('.control-group:nth-child(3)');
     if (panel) {
-        // Sjekk om knappen allerede finnes for å unngå duplikater ved reload
         if (document.getElementById('btn-toggle-gate')) return;
-
         const btn = document.createElement('button');
         btn.id = 'btn-toggle-gate';
         btn.className = 'game-btn';
@@ -106,7 +103,6 @@ function createLevelGeometry() {
         };
         gameState.walls.push(wallSegment);
 
-        // --- SLOTS ---
         const createSlot = (type, distFromBase, offsetSide, label) => {
             const bx = GameConfig.baseX + (GameConfig.wallRadius + distFromBase) * Math.cos(angle);
             const by = GameConfig.baseY + (GameConfig.wallRadius + distFromBase) * Math.sin(angle);
@@ -121,10 +117,8 @@ function createLevelGeometry() {
                 id: `slot-${type}-${i}-${label}`,
                 type: type,
                 parentWallId: wallSegment.id,
-                x: finalX,
-                y: finalY,
-                occupied: false,
-                unit: null
+                x: finalX, y: finalY,
+                occupied: false, unit: null
             });
         };
 
@@ -148,11 +142,7 @@ function setupEventListeners() {
     document.getElementById('btn-pause').addEventListener('click', togglePause);
     
     canvas.addEventListener('mousedown', handleCanvasClick);
-    
-    canvas.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        deselectUnit();
-    });
+    canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); deselectUnit(); });
 }
 
 // === SPILL-LOGIKK: ENHETER & STYRING ===
@@ -168,12 +158,10 @@ function buyUnit(type) {
         const newUnit = {
             id: Math.random().toString(36).substr(2, 9),
             type: type,
-            x: spawnX,
-            y: spawnY,
+            x: spawnX, y: spawnY,
             state: 'IDLE', 
             targetSlot: null,
-            targetX: spawnX,
-            targetY: spawnY,
+            targetX: spawnX, targetY: spawnY,
             hp: 100,
             stats: stats,
             color: stats.color,
@@ -183,15 +171,15 @@ function buyUnit(type) {
         gameState.units.push(newUnit);
         selectUnit(newUnit);
         updateUI();
-        uiMessage.innerText = `${stats.name} rekruttert! Klikk på en hvit sirkel for å sende ham dit.`;
+        uiMessage.innerText = `${stats.name} klar! Flytt ham til muren.`;
     } else {
-        uiMessage.innerText = "Ikke nok penger.";
+        uiMessage.innerText = "Mangler penger.";
     }
 }
 
 function selectUnit(unit) {
     gameState.selectedUnit = unit;
-    uiMessage.innerText = `Valgt: ${unit.stats.name}. Klikk på en slot for å flytte.`;
+    uiMessage.innerText = `Valgt: ${unit.stats.name}. Rekkevidde: ${unit.stats.range}px.`;
 }
 
 function deselectUnit() {
@@ -221,12 +209,10 @@ function handleCanvasClick(event) {
         moveUnitToSlot(gameState.selectedUnit, clickedSlot);
         return;
     }
-
     if (clickedUnit) {
         selectUnit(clickedUnit);
         return;
     }
-
     if (!clickedUnit && !clickedSlot) {
         deselectUnit();
     }
@@ -234,12 +220,11 @@ function handleCanvasClick(event) {
 
 function moveUnitToSlot(unit, slot) {
     if (slot.occupied && slot.unit !== unit) {
-        uiMessage.innerText = "Plassen er opptatt!";
+        uiMessage.innerText = "Opptatt plass!";
         return;
     }
-    
     if (unit.stats.type === 'melee' && slot.type === 'wall') {
-        uiMessage.innerText = "Nærkamp-enheter kan ikke stå på muren!";
+        uiMessage.innerText = "Nærkamp kan ikke stå oppå muren!";
         return;
     }
 
@@ -254,7 +239,7 @@ function moveUnitToSlot(unit, slot) {
     unit.targetSlot = slot;
     unit.state = 'MOVING';
     
-    uiMessage.innerText = `${unit.stats.name} flytter på seg...`;
+    uiMessage.innerText = `${unit.stats.name} flytter seg.`;
 }
 
 function toggleGate() {
@@ -264,10 +249,9 @@ function toggleGate() {
         btn.innerText = gameState.isGateOpen ? "Lukk Porten" : "Åpne Porten";
         btn.style.backgroundColor = gameState.isGateOpen ? "#e74c3c" : "#95a5a6";
     }
-    uiMessage.innerText = gameState.isGateOpen ? "Porten er ÅPEN!" : "Porten er LUKKET.";
 }
 
-// === GAME LOOP (DENNE MANGLER I FORRIGE VERSJON!) ===
+// === GAME LOOP ===
 function gameLoop(timestamp) {
     const deltaTime = (timestamp - gameState.lastTime) / 1000;
     gameState.lastTime = timestamp;
@@ -306,45 +290,53 @@ function update(dt) {
 }
 
 function updateUnit(unit, dt) {
+    // Cooldown
     if (unit.cooldownTimer > 0) unit.cooldownTimer -= dt;
     if (unit.attackLine > 0) unit.attackLine -= dt;
 
+    // --- BEVEGELSE ---
     if (unit.state === 'MOVING' && unit.targetSlot) {
         const dx = unit.targetSlot.x - unit.x;
         const dy = unit.targetSlot.y - unit.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
         
-        if (dist < 5) {
+        // "Snap" distanse: Hvis vi er nærmere enn f.eks. 5px, eller hvis vi beveger oss lenger enn distansen i denne framen
+        const moveStep = unit.stats.speed * dt;
+
+        if (dist <= moveStep || dist < 5) {
+            // Vi er fremme!
             unit.x = unit.targetSlot.x;
             unit.y = unit.targetSlot.y;
             unit.state = 'STATIONED';
         } else {
-            const speed = unit.stats.speed;
-            unit.x += (dx / dist) * speed * dt;
-            unit.y += (dy / dist) * speed * dt;
+            // Fortsett å gå
+            unit.x += (dx / dist) * moveStep;
+            unit.y += (dy / dist) * moveStep;
         }
     }
 
-    if (unit.state === 'STATIONED' || unit.state === 'IDLE') {
-        let closestEnemy = null;
-        let minDistance = Infinity;
+    // --- KAMP ---
+    // Nå tillater vi angrep selv om vi er i MOVING, så lenge fienden er nær nok
+    // Dette hindrer at soldater blir forsvarsløse hvis de går forbi en fiende
+    
+    let closestEnemy = null;
+    let minDistance = Infinity;
 
-        gameState.enemies.forEach(enemy => {
-            const d = Math.sqrt((enemy.x - unit.x)**2 + (enemy.y - unit.y)**2);
-            if (d < minDistance) {
-                minDistance = d;
-                closestEnemy = enemy;
-            }
-        });
+    gameState.enemies.forEach(enemy => {
+        const d = Math.sqrt((enemy.x - unit.x)**2 + (enemy.y - unit.y)**2);
+        if (d < minDistance) {
+            minDistance = d;
+            closestEnemy = enemy;
+        }
+    });
 
-        if (closestEnemy && minDistance <= unit.stats.range) {
-            if (unit.cooldownTimer <= 0) {
-                closestEnemy.hp -= unit.stats.damage;
-                unit.cooldownTimer = unit.stats.cooldown;
-                unit.targetX = closestEnemy.x; 
-                unit.targetY = closestEnemy.y;
-                unit.attackLine = 0.1;
-            }
+    if (closestEnemy && minDistance <= unit.stats.range) {
+        if (unit.cooldownTimer <= 0) {
+            closestEnemy.hp -= unit.stats.damage;
+            unit.cooldownTimer = unit.stats.cooldown;
+            unit.targetX = closestEnemy.x; 
+            unit.targetY = closestEnemy.y;
+            unit.attackLine = 0.1;
         }
     }
 }
@@ -368,6 +360,7 @@ function updateEnemy(enemy, dt, index) {
             if (w.isGate && gameState.isGateOpen) continue;
 
             const wDist = Math.sqrt((w.x - enemy.x)**2 + (w.y - enemy.y)**2);
+            // Sjekk kollisjon (vegg radius + fiende radius)
             if (wDist < (w.radius + enemy.radius)) {
                 canMove = false;
                 enemy.attackTimer -= dt;
@@ -459,19 +452,13 @@ function draw() {
         ctx.translate(wall.x, wall.y);
         ctx.rotate(wall.angle + Math.PI / 2);
 
-        ctx.fillStyle = "#8d6e63"; 
-        ctx.fillRect(-10, 20, 20, 30); 
+        ctx.fillStyle = "#8d6e63"; ctx.fillRect(-10, 20, 20, 30); 
 
         if (!wall.isBroken) {
-            if (wall.isGate) {
-                ctx.fillStyle = gameState.isGateOpen ? "#34495e" : "#5d4037"; 
-            } else {
-                ctx.fillStyle = "#7f8c8d";
-            }
+            ctx.fillStyle = (wall.isGate && gameState.isGateOpen) ? "#34495e" : (wall.isGate ? "#5d4037" : "#7f8c8d");
             
             if (wall.isGate && gameState.isGateOpen) {
-                 ctx.strokeStyle = "#5d4037";
-                 ctx.lineWidth = 2;
+                 ctx.strokeStyle = "#5d4037"; ctx.lineWidth = 2;
                  ctx.strokeRect(-wall.width / 2, -wall.height / 2, wall.width, wall.height);
             } else {
                 ctx.fillRect(-wall.width / 2, -wall.height / 2, wall.width, wall.height);
@@ -479,58 +466,45 @@ function draw() {
                 const hpPercent = wall.hp / wall.maxHp;
                 ctx.fillStyle = "#00ff00"; ctx.fillRect(-wall.width/2, -5, wall.width * hpPercent, 5);
             }
-
-            if (wall.isGate) {
-                ctx.fillStyle = "#fff"; ctx.font = "10px Arial"; 
-                ctx.fillText(gameState.isGateOpen ? "OPEN" : "GATE", 0, 0);
-            }
-
         } else {
-            ctx.fillStyle = "rgba(0,0,0,0.5)";
-            ctx.fillText("X", 0, 0);
+            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillText("X", 0, 0);
         }
         ctx.restore();
     });
 
     gameState.slots.forEach(slot => {
         const showSlots = (gameState.selectedUnit && gameState.selectedUnit.state !== 'MOVING') || slot.unit;
-        
         if (showSlots) {
-            ctx.beginPath();
-            ctx.arc(slot.x, slot.y, 6, 0, Math.PI * 2);
-            
-            if (slot.unit) {
-            } else {
-                if (gameState.selectedUnit) {
-                     const isMelee = gameState.selectedUnit.stats.type === 'melee';
-                     const illegal = (isMelee && slot.type === 'wall');
-                     
-                     ctx.fillStyle = illegal ? "rgba(255,0,0,0.3)" : "rgba(255,255,255,0.4)";
-                     ctx.fill();
-                     ctx.strokeStyle = "#fff"; ctx.stroke();
-                }
+            ctx.beginPath(); ctx.arc(slot.x, slot.y, 6, 0, Math.PI * 2);
+            if (!slot.unit && gameState.selectedUnit) {
+                 const isMelee = gameState.selectedUnit.stats.type === 'melee';
+                 const illegal = (isMelee && slot.type === 'wall');
+                 ctx.fillStyle = illegal ? "rgba(255,0,0,0.3)" : "rgba(255,255,255,0.4)";
+                 ctx.fill(); ctx.strokeStyle = "#fff"; ctx.stroke();
             }
         }
     });
 
     gameState.units.forEach(u => {
-        ctx.beginPath();
-        ctx.arc(u.x, u.y, 10, 0, Math.PI * 2);
-        ctx.fillStyle = u.color;
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(u.x, u.y, 10, 0, Math.PI * 2);
+        ctx.fillStyle = u.color; ctx.fill();
         
         if (gameState.selectedUnit === u) {
-            ctx.strokeStyle = "#f1c40f"; 
-            ctx.lineWidth = 3;
-            ctx.stroke();
+            ctx.strokeStyle = "#f1c40f"; ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1;
+            
+            // TEGN REKKEVIDDE-SIRKEL (NY!)
+            ctx.beginPath();
+            ctx.arc(u.x, u.y, u.stats.range, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(255,255,255,0.3)";
             ctx.lineWidth = 1;
-        } else {
-            ctx.strokeStyle = "#000";
+            ctx.setLineDash([5, 5]); // Stiplet linje
             ctx.stroke();
+            ctx.setLineDash([]); // Reset
+        } else {
+            ctx.strokeStyle = "#000"; ctx.stroke();
         }
 
-        ctx.fillStyle = "#fff"; ctx.font = "12px Arial";
-        ctx.fillText(u.stats.name.charAt(0), u.x, u.y);
+        ctx.fillStyle = "#fff"; ctx.font = "12px Arial"; ctx.fillText(u.stats.name.charAt(0), u.x, u.y);
 
         if (u.attackLine > 0) {
             ctx.strokeStyle = "yellow"; ctx.lineWidth = 2; 
@@ -548,4 +522,4 @@ function draw() {
 }
 
 window.onload = init;
-/* Version: #8 */
+/* Version: #9 */
