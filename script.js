@@ -459,3 +459,69 @@ function draw() {
                 ctx.strokeRect(-wall.width/2, -wall.height/2, wall.width, wall.height);
                 const hpP = wall.hp/wall.maxHp; ctx.fillStyle="#00ff00"; ctx.fillRect(-wall.width/2, -5, wall.width*hpP, 5);
             }
+        } else { ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillText("X", 0, 0); }
+        ctx.restore();
+    });
+
+    // Slots
+    gameState.slots.forEach(slot => {
+        const show = (gameState.selectedUnit && gameState.selectedUnit.state!=='MOVING') || slot.unit;
+        if(show) {
+            ctx.beginPath(); ctx.arc(slot.x, slot.y, 6, 0, Math.PI*2);
+            if(!slot.unit && gameState.selectedUnit) {
+                 const illegal = (gameState.selectedUnit.stats.type==='melee' && slot.type==='wall');
+                 ctx.fillStyle = illegal ? "rgba(255,0,0,0.3)" : "rgba(255,255,255,0.4)";
+                 ctx.fill(); ctx.strokeStyle="#fff"; ctx.stroke();
+            }
+        }
+    });
+
+    // Enheter
+    gameState.units.forEach(u => drawSprite(u));
+    gameState.enemies.forEach(e => drawSprite(e));
+}
+
+function drawSprite(entity) {
+    const def = Assets.definitions[entity.spriteId];
+    const img = Assets.sprites[entity.spriteId];
+    if (!img || !def) return;
+
+    const frameIndices = def.anims[entity.animState];
+    const safeFrameIndex = entity.animFrame < frameIndices.length ? frameIndices[entity.animFrame] : frameIndices[0];
+    const sx = safeFrameIndex * def.w;
+
+    ctx.save();
+    ctx.translate(entity.x, entity.y);
+    if (!entity.facingRight) ctx.scale(-1, 1);
+
+    // Skygge
+    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(0, 10, 8, 4, 0, 0, Math.PI*2); ctx.fill();
+
+    // Sprite
+    ctx.drawImage(img, sx, 0, def.w, def.h, -def.w/2, -def.h/2, def.w, def.h);
+    
+    // Debug Hitbox
+    if (GameConfig.debugMode) {
+        ctx.strokeStyle = "red"; ctx.strokeRect(-def.w/2, -def.h/2, def.w, def.h);
+    }
+    
+    ctx.restore();
+
+    // HP Bar & Seleksjon
+    if (entity.hp < (entity.maxHp || 100) || entity === gameState.selectedUnit) {
+        const max = entity.maxHp || 100;
+        const hpP = entity.hp / max;
+        ctx.fillStyle = "red"; ctx.fillRect(entity.x-10, entity.y-20, 20, 4);
+        ctx.fillStyle = "#00ff00"; ctx.fillRect(entity.x-10, entity.y-20, 20*hpP, 4);
+    }
+    
+    if (gameState.selectedUnit === entity) {
+        ctx.strokeStyle = "#f1c40f"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(entity.x, entity.y, 15, 0, Math.PI*2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(entity.x, entity.y, entity.stats.range, 0, Math.PI*2);
+        ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]);
+    }
+}
+
+window.onload = init;
+/* Version: #12 */
