@@ -1,6 +1,6 @@
-/* Version: #18 - Fixes & Wall Graphics */
+/* Version: #19 - Construction, Housing & Recruitment */
 
-// === HJELPEFUNKSJONER (Flyttet til toppen for å unngå feil) ===
+// === HJELPEFUNKSJONER ===
 function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
 function randomRange(min, max) { return Math.random() * (max - min) + min; }
 
@@ -10,7 +10,7 @@ const GameConfig = {
     screenHeight: 600,
     worldWidth: 2000,
     worldHeight: 2000,
-    tileSize: 32, // Grid størrelse
+    tileSize: 32,
     debugMode: false
 };
 
@@ -22,34 +22,43 @@ const ResourceTypes = {
 };
 
 const Buildings = {
-    PALISADE: { name: "Palisade", costType: 'wood', cost: 5, hp: 100, spriteId: 'spr_palisade' },
-    WALL:     { name: "Steinmur", costType: 'stone', cost: 5, hp: 300, spriteId: 'spr_wall' }
+    PALISADE: { name: "Palisade", costType: 'wood', cost: 5, hp: 100, spriteId: 'spr_palisade', buildTime: 2.0 },
+    WALL:     { name: "Steinmur", costType: 'stone', cost: 5, hp: 300, spriteId: 'spr_wall', buildTime: 4.0 },
+    HOUSE:    { name: "Hus", costType: 'wood', cost: 20, hp: 50, spriteId: 'spr_house', buildTime: 5.0, popBonus: 5 }
+};
+
+const UnitTypes = {
+    peasant: { name: "Fotsoldat", cost: { food: 50 }, damage: 5, range: 120, cooldown: 1.0, spriteId: 'peasant', speed: 60 },
+    archer:  { name: "Bueskytter", cost: { food: 50, wood: 25 }, damage: 8, range: 300, cooldown: 1.5, spriteId: 'archer', speed: 70 },
+    knight:  { name: "Ridder", cost: { food: 50, iron: 20 }, damage: 20, range: 120, cooldown: 0.8, spriteId: 'knight', speed: 50 }
 };
 
 // === ASSETS ===
 const Assets = {
     sprites: {},
     definitions: {
-        worker: { w: 32, h: 32, fps: 8, anims: { idle: [0], walk: [1,2,3,4], work: [5,6] } }
+        worker: { w: 32, h: 32, fps: 8, anims: { idle: [0], walk: [1,2,3,4], work: [5,6] } },
+        peasant: { w: 32, h: 32, fps: 8, anims: { idle: [0], walk: [1,2,3,4], attack: [5,6] } },
+        archer: { w: 32, h: 32, fps: 8, anims: { idle: [0], walk: [1,2,3,4], attack: [5,6] } },
+        knight: { w: 32, h: 32, fps: 8, anims: { idle: [0], walk: [1,2,3,4], attack: [5,6] } }
     }
 };
 
 // === SPILL-TILSTAND ===
 let gameState = {
-    resources: { food: 100, wood: 100, stone: 100, iron: 0 },
+    resources: { food: 200, wood: 100, stone: 50, iron: 0 },
+    population: { current: 0, max: 0 },
     camera: { x: 500, y: 500 },
     
-    worldObjects: [], 
+    worldObjects: [], // Ressurser, bygninger
     workers: [],      
+    soldiers: [],     // Ny liste for soldater
     keep: null,       
     
-    // Input & Modes
+    // Input
     selectedEntity: null,
     keys: { w: false, a: false, s: false, d: false },
-    
-    buildMode: null, // 'PALISADE', 'WALL'
-    dragStart: null, 
-    mouseWorld: { x: 0, y: 0 },
+    buildMode: null, dragStart: null, mouseWorld: { x: 0, y: 0 },
     
     lastTime: 0
 };
@@ -59,23 +68,26 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
-const uiResources = {
-    food: document.getElementById('res-food'),
-    wood: document.getElementById('res-wood'),
-    stone: document.getElementById('res-stone'),
-    iron: document.getElementById('res-iron')
+const ui = {
+    res: {
+        pop: document.getElementById('res-pop'),
+        food: document.getElementById('res-food'),
+        wood: document.getElementById('res-wood'),
+        stone: document.getElementById('res-stone'),
+        iron: document.getElementById('res-iron')
+    },
+    selection: document.getElementById('selection-info'),
+    msg: document.getElementById('status-message'),
+    btnCancel: document.getElementById('btn-cancel-action')
 };
-const uiSelection = document.getElementById('selection-info');
-const uiMessage = document.getElementById('status-message');
-const btnCancel = document.getElementById('btn-cancel-action');
 
 // === INITIALISERING ===
 function init() {
-    console.log("Initialiserer RTS Fase 2 (v18)...");
+    console.log("Initialiserer RTS Fase 3 (v19)...");
     generatePlaceholderSprites();
     createWorld();
     
-    // Start-arbeidere
+    // Start med 2 arbeidere
     spawnWorker(gameState.keep.x + 50, gameState.keep.y + 50);
     spawnWorker(gameState.keep.x - 50, gameState.keep.y + 50);
     
@@ -84,10 +96,10 @@ function init() {
     requestAnimationFrame(gameLoop);
 }
 
-// === GRAFIKK GENERATOR ===
+// === GRAFIKK ===
 function generatePlaceholderSprites() {
-    // 1. Worker Sprite (Stick figure)
-    const createSheet = (id, color, size) => {
+    // 1. Stick Figures (Worker + Soldiers)
+    const createSheet = (id, color, size, weapon) => {
         const c = document.createElement('canvas'); c.width = size * 8; c.height = size;
         const x = c.getContext('2d');
         const drawFrame = (idx, legOff, armAction) => {
@@ -101,45 +113,37 @@ function generatePlaceholderSprites() {
             if (armAction) { x.moveTo(cx, cy); x.lineTo(cx + (size*0.3), cy - (size*0.1)); x.moveTo(cx, cy); x.lineTo(cx + (size*0.3), cy + (size*0.1)); }
             else { x.moveTo(cx, cy); x.lineTo(cx - (size*0.15), cy + (size*0.15) - legOff); x.moveTo(cx, cy); x.lineTo(cx + (size*0.15), cy + (size*0.15) + legOff); }
             x.stroke();
+            if(weapon === 'bow') { x.strokeStyle="brown"; x.beginPath(); x.arc(cx+5, cy, 8, -1, 1); x.stroke(); }
+            if(weapon === 'sword') { x.strokeStyle="#ccc"; x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx+10, cy-5); x.stroke(); }
         };
         drawFrame(0, 0, false);
         drawFrame(1, -5, false); drawFrame(2, 0, false); drawFrame(3, 5, false); drawFrame(4, 0, false);
         drawFrame(5, 0, true); drawFrame(6, 0, true);
         const img = new Image(); img.src = c.toDataURL(); Assets.sprites[id] = img;
     };
-    createSheet('worker', '#f1c40f', 32);
+    createSheet('worker', '#f1c40f', 32, null);
+    createSheet('peasant', '#d35400', 32, 'sword');
+    createSheet('archer', '#27ae60', 32, 'bow');
+    createSheet('knight', '#2980b9', 32, 'sword');
 
-    // 2. Vegg Teksturer (NYTT)
+    // 2. Bygninger
     const createTile = (id, drawFn) => {
         const c = document.createElement('canvas'); c.width = 32; c.height = 32;
-        const x = c.getContext('2d');
-        drawFn(x);
+        const x = c.getContext('2d'); drawFn(x);
         const img = new Image(); img.src = c.toDataURL(); Assets.sprites[id] = img;
     };
-
-    // Palisade (Brune stokker)
     createTile('spr_palisade', (x) => {
-        x.fillStyle = "#5d4037"; 
-        // Tegn 4 stokker
-        for(let i=0; i<4; i++) {
-            x.fillRect(i*8, 2, 6, 30); // Stokk
-            x.beginPath(); x.moveTo(i*8, 2); x.lineTo(i*8+3, 0); x.lineTo(i*8+6, 2); x.fill(); // Spiss
-        }
-        x.fillStyle = "rgba(0,0,0,0.3)"; x.fillRect(0, 20, 32, 4); // Tverrbjelke
+        x.fillStyle = "#5d4037"; for(let i=0;i<4;i++){x.fillRect(i*8,2,6,30);x.beginPath();x.moveTo(i*8,2);x.lineTo(i*8+3,0);x.lineTo(i*8+6,2);x.fill();}
+        x.fillStyle = "rgba(0,0,0,0.3)"; x.fillRect(0,20,32,4);
     });
-
-    // Steinmur (Grå murstein)
     createTile('spr_wall', (x) => {
-        x.fillStyle = "#7f8c8d"; x.fillRect(0,0,32,32);
-        x.strokeStyle = "#555"; x.lineWidth = 1;
-        // Tegn mønster
-        x.beginPath();
-        x.moveTo(0, 10); x.lineTo(32, 10);
-        x.moveTo(0, 20); x.lineTo(32, 20);
-        x.moveTo(10, 0); x.lineTo(10, 10);
-        x.moveTo(20, 10); x.lineTo(20, 20);
-        x.moveTo(10, 20); x.lineTo(10, 32);
-        x.stroke();
+        x.fillStyle = "#7f8c8d"; x.fillRect(0,0,32,32); x.strokeStyle="#555"; x.lineWidth=1;
+        x.beginPath(); x.moveTo(0,10);x.lineTo(32,10);x.moveTo(0,20);x.lineTo(32,20);x.moveTo(10,0);x.lineTo(10,10);x.moveTo(20,10);x.lineTo(20,20);x.moveTo(10,20);x.lineTo(10,32);x.stroke();
+    });
+    createTile('spr_house', (x) => {
+        x.fillStyle = "#a1887f"; x.fillRect(4,12,24,20); // Vegg
+        x.fillStyle = "#5d4037"; x.beginPath(); x.moveTo(0,12); x.lineTo(16,0); x.lineTo(32,12); x.fill(); // Tak
+        x.fillStyle = "#3e2723"; x.fillRect(12,22,8,10); // Dør
     });
 }
 
@@ -147,7 +151,8 @@ function generatePlaceholderSprites() {
 function createWorld() {
     gameState.keep = {
         id: 'keep', type: 'building', subType: 'keep',
-        x: GameConfig.worldWidth/2, y: GameConfig.worldHeight/2, w: 100, h: 100, color: '#8e44ad'
+        x: GameConfig.worldWidth/2, y: GameConfig.worldHeight/2, w: 100, h: 100, color: '#8e44ad',
+        built: true, progress: 100, hp: 1000
     };
     gameState.worldObjects.push(gameState.keep);
     
@@ -162,7 +167,7 @@ function createWorld() {
 
 function spawnResource(def, x, y) {
     gameState.worldObjects.push({
-        id: Math.random().toString(36).substr(2,9), type: 'resource', resType: def.type,
+        id: Math.random().toString(36), type: 'resource', resType: def.type,
         name: def.name, color: def.color, icon: def.icon, capacity: def.capacity, amount: def.capacity,
         harvestTime: def.harvestTime, x: x, y: y, w: 32, h: 32
     });
@@ -170,10 +175,20 @@ function spawnResource(def, x, y) {
 
 function spawnWorker(x, y) {
     gameState.workers.push({
-        id: Math.random().toString(36).substr(2,9), type: 'worker', name: 'Arbeider',
+        id: Math.random().toString(36), type: 'worker', name: 'Arbeider',
         x: x, y: y, w: 32, h: 32, speed: 90,
         state: 'IDLE', target: null, carryType: null, carryAmount: 0, maxCarry: 10, gatherTimer: 0,
         spriteId: 'worker', animState: 'idle', animFrame: 0, animTimer: 0, facingRight: true
+    });
+}
+
+function spawnSoldier(def, x, y) {
+    gameState.soldiers.push({
+        id: Math.random().toString(36), type: 'soldier', name: def.name,
+        x: x, y: y, w: 32, h: 32, speed: def.speed, stats: def,
+        state: 'IDLE', target: null, 
+        spriteId: def.spriteId, animState: 'idle', animFrame: 0, animTimer: 0, facingRight: true,
+        hp: 100
     });
 }
 
@@ -184,7 +199,11 @@ function setupInput() {
         
         if (gameState.buildMode) {
             if (e.button === 0) {
-                gameState.dragStart = snapToGrid(mouse.x, mouse.y);
+                if (gameState.buildMode === 'HOUSE') {
+                    placeSingleBuilding(snapToGrid(mouse.x, mouse.y), 'HOUSE');
+                } else {
+                    gameState.dragStart = snapToGrid(mouse.x, mouse.y);
+                }
             }
             return;
         }
@@ -198,7 +217,7 @@ function setupInput() {
     canvas.addEventListener('mouseup', (e) => {
         if (gameState.buildMode && gameState.dragStart) {
             const end = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
-            completeWallBuild(gameState.dragStart, end);
+            placeWallBlueprints(gameState.dragStart, end);
             gameState.dragStart = null;
         }
     });
@@ -209,6 +228,12 @@ function setupInput() {
         const mouse = getMouseWorldPos(e);
         if (gameState.selectedEntity && gameState.selectedEntity.type === 'worker') {
             handleWorkerCommand(gameState.selectedEntity, mouse.x, mouse.y);
+        }
+        else if (gameState.selectedEntity && gameState.selectedEntity.type === 'soldier') {
+            // Soldat ordre (Flytt) - Kommer mer i fase 4
+            gameState.selectedEntity.target = {x: mouse.x, y: mouse.y};
+            gameState.selectedEntity.state = 'MOVING';
+            ui.msg.innerText = "Soldat flytter seg.";
         }
     });
 
@@ -222,85 +247,122 @@ function setupInput() {
         if(e.key==='s') gameState.keys.s=false; if(e.key==='d') gameState.keys.d=false;
     });
 
-    document.getElementById('btn-create-worker').onclick = () => {
-        if (gameState.resources.food >= 50) {
-            gameState.resources.food -= 50;
-            spawnWorker(gameState.keep.x, gameState.keep.y+60);
-            updateUI(); uiMessage.innerText = "Ny arbeider!";
-        } else uiMessage.innerText = "Mangler mat (50).";
-    };
-
+    // UI Events
+    document.getElementById('btn-create-worker').onclick = attemptCreateWorker;
+    document.getElementById('btn-build-house').onclick = () => setBuildMode('HOUSE');
     document.getElementById('btn-build-palisade').onclick = () => setBuildMode('PALISADE');
     document.getElementById('btn-build-wall').onclick = () => setBuildMode('WALL');
-    btnCancel.onclick = () => setBuildMode(null);
+    
+    document.getElementById('btn-train-peasant').onclick = () => convertWorkerToSoldier('peasant');
+    document.getElementById('btn-train-archer').onclick = () => convertWorkerToSoldier('archer');
+    document.getElementById('btn-train-knight').onclick = () => convertWorkerToSoldier('knight');
+    
+    ui.btnCancel.onclick = () => setBuildMode(null);
+}
+
+// === BYGGING & POPULATION ===
+function attemptCreateWorker() {
+    if (gameState.population.current >= gameState.population.max) {
+        ui.msg.innerText = "Befolkningsgrense nådd! Bygg flere hus.";
+        return;
+    }
+    if (gameState.resources.food >= 50) {
+        gameState.resources.food -= 50;
+        spawnWorker(gameState.keep.x, gameState.keep.y + 60);
+        updateUI(); ui.msg.innerText = "Ny arbeider trent!";
+    } else ui.msg.innerText = "Mangler mat (50).";
+}
+
+function convertWorkerToSoldier(type) {
+    const def = UnitTypes[type];
+    
+    // 1. Sjekk ressurser
+    let canAfford = true;
+    for (let res in def.cost) {
+        if (gameState.resources[res] < def.cost[res]) canAfford = false;
+    }
+    if (!canAfford) { ui.msg.innerText = "Mangler ressurser til trening."; return; }
+
+    // 2. Finn ledig arbeider (nær borgen helst, eller tilfeldig)
+    let candidate = gameState.workers.find(w => w.state === 'IDLE');
+    if (!candidate) { ui.msg.innerText = "Ingen ledige arbeidere å trene!"; return; }
+
+    // 3. Utfør
+    for (let res in def.cost) gameState.resources[res] -= def.cost[res];
+    
+    // Fjern arbeider
+    const idx = gameState.workers.indexOf(candidate);
+    gameState.workers.splice(idx, 1);
+    
+    // Lag soldat på samme sted
+    spawnSoldier(def, candidate.x, candidate.y);
+    
+    updateUI();
+    ui.msg.innerText = `${def.name} klar til strid!`;
 }
 
 function setBuildMode(mode) {
     gameState.buildMode = mode;
     gameState.dragStart = null;
     document.querySelectorAll('.game-btn').forEach(b => b.classList.remove('active'));
-    btnCancel.classList.add('hidden');
-
+    ui.btnCancel.classList.add('hidden');
     if (mode) {
-        uiMessage.innerText = `BYGGEMODUS: ${mode}. Dra for å bygge.`;
-        btnCancel.classList.remove('hidden');
-        if(mode==='PALISADE') document.getElementById('btn-build-palisade').classList.add('active');
-        if(mode==='WALL') document.getElementById('btn-build-wall').classList.add('active');
-    } else {
-        uiMessage.innerText = "Velg en arbeider.";
+        ui.msg.innerText = `BYGG: ${mode}. Arbeidere må bygge ferdig.`;
+        ui.btnCancel.classList.remove('hidden');
     }
 }
 
 function snapToGrid(x, y) {
-    return {
-        x: Math.floor(x / GameConfig.tileSize) * GameConfig.tileSize,
-        y: Math.floor(y / GameConfig.tileSize) * GameConfig.tileSize
-    };
+    return { x: Math.floor(x/GameConfig.tileSize)*GameConfig.tileSize, y: Math.floor(y/GameConfig.tileSize)*GameConfig.tileSize };
 }
 
-function completeWallBuild(start, end) {
-    const typeDef = Buildings[gameState.buildMode];
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const distVal = dist(0, 0, dx, dy); // Bruker dist funksjonen nå (den er trygg)
-    const count = Math.ceil(distVal / GameConfig.tileSize);
+function placeSingleBuilding(pos, type) {
+    const def = Buildings[type];
+    if (gameState.resources[def.costType] < def.cost) { ui.msg.innerText = "Mangler ressurser."; return; }
+    
+    gameState.resources[def.costType] -= def.cost;
+    updateUI();
+    
+    gameState.worldObjects.push({
+        id: Math.random().toString(36), type: 'building', subType: type,
+        x: pos.x + 16, y: pos.y + 16, w: 32, h: 32,
+        spriteId: def.spriteId, hp: def.hp, maxHp: def.hp,
+        built: false, progress: 0, buildTime: def.buildTime, popBonus: def.popBonus || 0
+    });
+    ui.msg.innerText = "Husplan lagt. Send arbeider!";
+}
 
+function placeWallBlueprints(start, end) {
+    const typeDef = Buildings[gameState.buildMode];
+    const dx = end.x - start.x; const dy = end.y - start.y;
+    const distVal = dist(0, 0, dx, dy);
+    const count = Math.ceil(distVal / GameConfig.tileSize);
     if (count <= 0) return;
 
     const totalCost = count * typeDef.cost;
-    if (gameState.resources[typeDef.costType] < totalCost) {
-        uiMessage.innerText = `Mangler ressurser! Trenger ${totalCost} ${typeDef.costType}.`;
-        return;
-    }
+    if (gameState.resources[typeDef.costType] < totalCost) { ui.msg.innerText = "Mangler ressurser."; return; }
 
     gameState.resources[typeDef.costType] -= totalCost;
     updateUI();
-    uiMessage.innerText = `Bygget ${count} ${typeDef.name}.`;
 
     for (let i = 0; i <= count; i++) {
         const factor = count === 0 ? 0 : i / count;
-        const wx = start.x + dx * factor;
-        const wy = start.y + dy * factor;
+        const wx = start.x + dx * factor; const wy = start.y + dy * factor;
         const gridPos = snapToGrid(wx, wy);
 
+        // Ikke bygg oppå ting
         let blocked = false;
-        gameState.worldObjects.forEach(obj => {
-            if (dist(gridPos.x, gridPos.y, obj.x, obj.y) < 20) blocked = true;
-        });
+        gameState.worldObjects.forEach(obj => { if (dist(gridPos.x+16, gridPos.y+16, obj.x, obj.y) < 10) blocked = true; });
 
         if (!blocked) {
             gameState.worldObjects.push({
-                id: Math.random().toString(36),
-                type: 'wall',
-                subType: gameState.buildMode,
-                spriteId: typeDef.spriteId, // Referanse til bildet
-                x: gridPos.x + GameConfig.tileSize/2,
-                y: gridPos.y + GameConfig.tileSize/2,
-                w: GameConfig.tileSize, h: GameConfig.tileSize,
-                hp: typeDef.hp
+                id: Math.random().toString(36), type: 'wall', subType: gameState.buildMode,
+                spriteId: typeDef.spriteId, x: gridPos.x + 16, y: gridPos.y + 16, w: 32, h: 32,
+                hp: typeDef.hp, built: false, progress: 0, buildTime: typeDef.buildTime
             });
         }
     }
+    ui.msg.innerText = "Murplan lagt. Send arbeidere!";
 }
 
 // === LOGIKK ===
@@ -316,6 +378,20 @@ function gameLoop(timestamp) {
 function update(dt) {
     updateCamera(dt);
     gameState.workers.forEach(w => updateWorker(w, dt));
+    gameState.soldiers.forEach(s => updateSoldier(s, dt));
+    calculatePopulation();
+}
+
+function calculatePopulation() {
+    let cap = 5; // Base (Borg)
+    gameState.worldObjects.forEach(o => {
+        if (o.type === 'building' && o.subType === 'HOUSE' && o.built) {
+            cap += o.popBonus;
+        }
+    });
+    gameState.population.max = cap;
+    gameState.population.current = gameState.workers.length + gameState.soldiers.length;
+    updateUI();
 }
 
 function updateCamera(dt) {
@@ -328,19 +404,12 @@ function updateCamera(dt) {
 
 function updateWorker(w, dt) {
     const isMoving = w.state === 'MOVING';
-    const isWorking = w.state === 'GATHERING';
-    
-    if (isWorking) w.animState = 'work';
-    else if (isMoving) w.animState = 'walk';
-    else w.animState = 'idle';
+    const isWorking = w.state === 'GATHERING' || w.state === 'BUILDING';
+    w.animState = isWorking ? 'work' : (isMoving ? 'walk' : 'idle');
 
     const def = Assets.definitions[w.spriteId];
     w.animTimer += dt;
-    if (w.animTimer >= (1/def.fps)) {
-        w.animTimer = 0;
-        const frames = def.anims[w.animState];
-        w.animFrame = (w.animFrame+1) % frames.length;
-    }
+    if (w.animTimer >= (1/def.fps)) { w.animTimer = 0; w.animFrame = (w.animFrame+1) % def.anims[w.animState].length; }
 
     if (w.state === 'IDLE') return;
 
@@ -348,29 +417,50 @@ function updateWorker(w, dt) {
         const dx = w.target.x - w.x; const dy = w.target.y - w.y;
         const d = Math.sqrt(dx*dx + dy*dy);
         if (d > 5) {
-            w.x += (dx/d)*w.speed*dt; w.y += (dy/d)*w.speed*dt;
-            w.facingRight = dx > 0;
+            w.x += (dx/d)*w.speed*dt; w.y += (dy/d)*w.speed*dt; w.facingRight = dx > 0;
         } else {
-            if (w.jobType === 'GATHER' && w.target.type === 'resource') { w.state = 'GATHERING'; w.gatherTimer = w.target.harvestTime; }
+            if (w.jobType === 'GATHER') { w.state = 'GATHERING'; w.gatherTimer = w.target.harvestTime; }
+            else if (w.jobType === 'BUILD') { w.state = 'BUILDING'; }
             else if (w.jobType === 'RETURN') w.state = 'DEPOSITING';
             else w.state = 'IDLE';
         }
-    } else if (w.state === 'GATHERING') {
+    } 
+    else if (w.state === 'GATHERING') {
         w.gatherTimer -= dt;
         if (w.gatherTimer <= 0) {
             w.carryType = w.target.resType; w.carryAmount = w.maxCarry;
             w.target.amount -= w.maxCarry;
             if (w.target.amount <= 0) {
-                const idx = gameState.worldObjects.indexOf(w.target);
-                if (idx > -1) gameState.worldObjects.splice(idx, 1);
-                w.target = null;
+                const idx = gameState.worldObjects.indexOf(w.target); if(idx>-1)gameState.worldObjects.splice(idx,1); w.target = null;
             }
-            w.state = 'MOVING'; w.target = gameState.keep; w.jobType = 'RETURN';
-            w.lastResourcePos = { x: w.x, y: w.y, type: w.carryType };
+            w.state = 'MOVING'; w.target = gameState.keep; w.jobType = 'RETURN'; w.lastResourcePos = { x: w.x, y: w.y, type: w.carryType };
         }
-    } else if (w.state === 'DEPOSITING') {
-        gameState.resources[w.carryType] += w.carryAmount;
-        w.carryAmount = 0; w.carryType = null; updateUI();
+    } 
+    else if (w.state === 'BUILDING') {
+        if (!w.target || w.target.built) {
+            // Ferdig eller ugyldig, se etter mer arbeid i nærheten
+            const nextBuild = findNearbyBlueprint(w);
+            if (nextBuild) {
+                w.target = nextBuild;
+                w.state = 'MOVING';
+                w.jobType = 'BUILD';
+            } else {
+                w.state = 'IDLE';
+            }
+            return;
+        }
+        
+        // Bygg
+        const buildSpeed = (100 / w.target.buildTime) * dt; // % per sekund
+        w.target.progress += buildSpeed;
+        if (w.target.progress >= 100) {
+            w.target.progress = 100;
+            w.target.built = true;
+            w.state = 'IDLE'; // Vil finne ny jobb neste frame via logikken over
+        }
+    }
+    else if (w.state === 'DEPOSITING') {
+        gameState.resources[w.carryType] += w.carryAmount; w.carryAmount = 0; w.carryType = null;
         if (w.lastResourcePos) {
             let near = null, minDist = Infinity;
             gameState.worldObjects.forEach(o => {
@@ -379,9 +469,37 @@ function updateWorker(w, dt) {
                     if(d < minDist) { minDist = d; near = o; }
                 }
             });
-            if (near && minDist < 300) { w.state = 'MOVING'; w.target = near; w.jobType = 'GATHER'; }
-            else w.state = 'IDLE';
+            if (near && minDist < 300) { w.state = 'MOVING'; w.target = near; w.jobType = 'GATHER'; } else w.state = 'IDLE';
         } else w.state = 'IDLE';
+    }
+}
+
+function findNearbyBlueprint(worker) {
+    let found = null;
+    let minDist = 150; // Søkeradius for neste byggejobb
+    gameState.worldObjects.forEach(o => {
+        if ((o.type === 'wall' || o.type === 'building') && !o.built) {
+            const d = dist(worker.x, worker.y, o.x, o.y);
+            if (d < minDist) { minDist = d; found = o; }
+        }
+    });
+    return found;
+}
+
+function updateSoldier(s, dt) {
+    const isMoving = s.state === 'MOVING';
+    s.animState = isMoving ? 'walk' : 'idle';
+    
+    const def = Assets.definitions[s.spriteId];
+    s.animTimer += dt;
+    if (s.animTimer >= (1/def.fps)) { s.animTimer = 0; s.animFrame = (s.animFrame+1) % def.anims[s.animState].length; }
+
+    if (s.state === 'MOVING' && s.target) {
+        const dx = s.target.x - s.x; const dy = s.target.y - s.y;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d > 5) {
+            s.x += (dx/d)*s.speed*dt; s.y += (dy/d)*s.speed*dt; s.facingRight = dx > 0;
+        } else s.state = 'IDLE';
     }
 }
 
@@ -391,63 +509,60 @@ function draw() {
     ctx.save();
     ctx.translate(-gameState.camera.x, -gameState.camera.y);
 
-    // Bakke
     ctx.fillStyle = "#2ecc71"; ctx.fillRect(0,0,GameConfig.worldWidth,GameConfig.worldHeight);
     
-    // Grid
-    ctx.strokeStyle = "rgba(0,0,0,0.05)"; ctx.lineWidth=1;
-    for(let x=0; x<GameConfig.worldWidth; x+=32) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,GameConfig.worldHeight); ctx.stroke(); }
-    for(let y=0; y<GameConfig.worldHeight; y+=32) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(GameConfig.worldWidth,y); ctx.stroke(); }
-
-    const allObjects = [...gameState.worldObjects, ...gameState.workers];
+    // Sorter objekter for dybde
+    const allObjects = [...gameState.worldObjects, ...gameState.workers, ...gameState.soldiers];
     allObjects.sort((a,b) => a.y - b.y);
 
     allObjects.forEach(obj => {
-        if (obj.type === 'building') {
-            ctx.fillStyle = obj.color; ctx.fillRect(obj.x-obj.w/2, obj.y-obj.h/2, obj.w, obj.h);
-            ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.strokeRect(obj.x-obj.w/2, obj.y-obj.h/2, obj.w, obj.h);
-            ctx.fillStyle="#fff"; ctx.font="14px Arial"; ctx.textAlign="center"; ctx.fillText("BORG", obj.x, obj.y);
-        } else if (obj.type === 'resource') {
+        const isBlueprint = (obj.type === 'wall' || obj.type === 'building') && !obj.built;
+        
+        if (isBlueprint) ctx.globalAlpha = 0.5; // Gjennomsiktig hvis ikke bygget
+
+        if (obj.type === 'building' || obj.type === 'wall') {
+            const img = Assets.sprites[obj.spriteId];
+            if (img) ctx.drawImage(img, obj.x-16, obj.y-16);
+            else { ctx.fillStyle=obj.color; ctx.fillRect(obj.x-16, obj.y-16, 32, 32); }
+            
+            // Progress Bar
+            if (!obj.built && obj.type !== 'resource') {
+                ctx.fillStyle = "black"; ctx.fillRect(obj.x-16, obj.y-22, 32, 4);
+                ctx.fillStyle = "yellow"; ctx.fillRect(obj.x-16, obj.y-22, 32 * (obj.progress/100), 4);
+            }
+        } 
+        else if (obj.type === 'resource') {
             ctx.font="24px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(obj.icon, obj.x, obj.y);
             const p = obj.amount/obj.capacity; ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(obj.x-10, obj.y+15, 20, 3);
             ctx.fillStyle="#fff"; ctx.fillRect(obj.x-10, obj.y+15, 20*p, 3);
-        } else if (obj.type === 'worker') {
+        } 
+        else if (obj.type === 'worker' || obj.type === 'soldier') {
             drawSprite(obj);
-            if(obj.carryType) {
+            if (obj.carryType) {
                  ctx.font="12px Arial"; const ic = obj.carryType==='wood'?'🌲':(obj.carryType==='stone'?'🪨':'🍖');
                  ctx.fillText(ic, obj.x, obj.y-20);
             }
-            if(gameState.selectedEntity === obj) {
+            if (gameState.selectedEntity === obj) {
                 ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(obj.x, obj.y, 15, 0, Math.PI*2); ctx.stroke();
             }
-        } else if (obj.type === 'wall') {
-            // TEGN GRAFIKK FOR VEGG
-            const img = Assets.sprites[obj.spriteId];
-            if (img) {
-                // Tegn bildet sentrert
-                ctx.drawImage(img, obj.x - 16, obj.y - 16);
-            } else {
-                // Fallback hvis bildet mangler
-                ctx.fillStyle = "pink"; ctx.fillRect(obj.x-16, obj.y-16, 32, 32);
-            }
         }
+        
+        ctx.globalAlpha = 1.0; // Reset alpha
     });
 
-    if (gameState.buildMode && gameState.dragStart) {
+    // Preview
+    if (gameState.buildMode && gameState.dragStart && gameState.buildMode !== 'HOUSE') {
         const start = gameState.dragStart;
         const end = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
-        
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(start.x + 16, start.y + 16); ctx.lineTo(end.x + 16, end.y + 16); ctx.stroke();
-        
-        const dx = end.x - start.x; const dy = end.y - start.y;
-        const dVal = dist(0, 0, dx, dy);
-        const count = Math.ceil(dVal / GameConfig.tileSize);
-        const cost = count * Buildings[gameState.buildMode].cost;
-        
-        ctx.fillStyle = "#fff"; ctx.font = "14px Arial";
-        ctx.fillText(`${cost} ${Buildings[gameState.buildMode].costType}`, end.x, end.y - 10);
+    }
+    // Preview House
+    if (gameState.buildMode === 'HOUSE') {
+        const pos = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(Assets.sprites['spr_house'], pos.x, pos.y);
+        ctx.globalAlpha = 1.0;
     }
 
     ctx.restore();
@@ -457,42 +572,49 @@ function drawSprite(entity) {
     const def = Assets.definitions[entity.spriteId];
     const img = Assets.sprites[entity.spriteId];
     if (!img || !def) return;
-    const frameIndices = def.anims[entity.animState];
-    const safeFrameIndex = entity.animFrame < frameIndices.length ? frameIndices[entity.animFrame] : frameIndices[0];
-    const sx = safeFrameIndex * def.w;
-
-    ctx.save();
-    ctx.translate(entity.x, entity.y);
+    const idx = def.anims[entity.animState];
+    const frame = idx[entity.animFrame % idx.length];
+    const sx = frame * def.w;
+    
+    ctx.save(); ctx.translate(entity.x, entity.y);
     if (!entity.facingRight) ctx.scale(-1, 1);
     ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(0, 10, 8, 4, 0, 0, Math.PI*2); ctx.fill();
     ctx.drawImage(img, sx, 0, def.w, def.h, -def.w/2, -def.h/2, def.w, def.h);
     ctx.restore();
 }
 
-// === UI ===
+// === UI HJELP ===
 function getMouseWorldPos(e) {
     const r = canvas.getBoundingClientRect();
     return { x: (e.clientX - r.left) + gameState.camera.x, y: (e.clientY - r.top) + gameState.camera.y };
 }
 function selectEntity(wx, wy) {
     let f = null;
-    gameState.workers.forEach(w => { if(dist(wx, wy, w.x, w.y) < 20) f = w; });
-    if(!f) gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y) < 20) f = o; });
+    [...gameState.workers, ...gameState.soldiers].forEach(u => { if(dist(wx, wy, u.x, u.y)<20) f=u; });
+    if(!f) gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y)<20) f=o; });
     gameState.selectedEntity = f;
-    uiSelection.innerText = f ? `${f.type} (${f.amount || f.state || ''})` : "Ingen valgt";
+    ui.selection.innerText = f ? `${f.type} (${f.state || ''})` : "Ingen valgt";
 }
 function handleWorkerCommand(w, wx, wy) {
-    let res = null;
-    gameState.worldObjects.forEach(o => { if(o.type==='resource' && dist(wx, wy, o.x, o.y)<25) res = o; });
-    if(res) { w.state='MOVING'; w.target=res; w.jobType='GATHER'; uiMessage.innerText="Samler ressurser."; }
-    else { w.state='MOVING'; w.target={x: wx, y: wy}; w.jobType='MOVE'; uiMessage.innerText="Går."; }
+    let target = null;
+    gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y)<25) target = o; });
+    
+    if (target) {
+        if (target.type === 'resource') { w.state='MOVING'; w.target=target; w.jobType='GATHER'; ui.msg.innerText="Samler ressurser."; }
+        else if ((target.type === 'wall' || target.type === 'building') && !target.built) {
+            w.state='MOVING'; w.target=target; w.jobType='BUILD'; ui.msg.innerText="Går for å bygge.";
+        }
+    } else {
+        w.state='MOVING'; w.target={x: wx, y: wy}; w.jobType='MOVE'; ui.msg.innerText="Går.";
+    }
 }
 function updateUI() {
-    uiResources.food.innerText = Math.floor(gameState.resources.food);
-    uiResources.wood.innerText = Math.floor(gameState.resources.wood);
-    uiResources.stone.innerText = Math.floor(gameState.resources.stone);
-    uiResources.iron.innerText = Math.floor(gameState.resources.iron);
+    ui.res.pop.innerText = `${gameState.population.current}/${gameState.population.max}`;
+    ui.res.food.innerText = Math.floor(gameState.resources.food);
+    ui.res.wood.innerText = Math.floor(gameState.resources.wood);
+    ui.res.stone.innerText = Math.floor(gameState.resources.stone);
+    ui.res.iron.innerText = Math.floor(gameState.resources.iron);
 }
 
 window.onload = init;
-/* Version: #18 */
+/* Version: #19 */
