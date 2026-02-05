@@ -1,34 +1,33 @@
-/* Version: #12 - Robust Animation & Logic Restore */
+/* Version: #13 - Projectiles & Expanded Defense */
 
 // === KONFIGURASJON ===
 const GameConfig = {
     canvasWidth: 1000,
     canvasHeight: 600,
-    debugMode: false, // Sett til true for å se kollisjonsbokser
+    debugMode: false,
     
-    // Base
     baseX: 500,
     baseY: 550,
     wallRadius: 220,
     wallSegments: 7,
     gateIndex: 3,
 
-    // Fiender
     enemySpawnInterval: 1000,
     baseEnemySpeed: 30,
 
-    // Enheter
+    // Enheter (Skade halvert etter ønske)
     units: {
         peasant: { 
-            name: "Fotsoldat", cost: 50, damage: 10, range: 120, cooldown: 1.0, 
+            name: "Fotsoldat", cost: 50, damage: 5, range: 120, cooldown: 1.0, 
             type: 'melee', speed: 60, spriteId: 'peasant', color: "#d35400"
         },
         archer:  { 
-            name: "Bueskytter", cost: 100, damage: 15, range: 300, cooldown: 1.5, 
-            type: 'ranged', speed: 70, spriteId: 'archer', color: "#27ae60"
+            name: "Bueskytter", cost: 100, damage: 7.5, range: 300, cooldown: 1.5, 
+            type: 'ranged', speed: 70, spriteId: 'archer', color: "#27ae60",
+            projectileSpeed: 200 // Hvor fort pilen flyr
         },
         knight:  { 
-            name: "Ridder", cost: 200, damage: 40, range: 120, cooldown: 0.8, 
+            name: "Ridder", cost: 200, damage: 20, range: 120, cooldown: 0.8, 
             type: 'melee', speed: 50, spriteId: 'knight', color: "#2980b9"
         }
     }
@@ -62,6 +61,10 @@ let gameState = {
     slots: [],
     enemies: [],
     units: [],
+    
+    // NYTT: Lister for prosjektiler og visuelle effekter
+    projectiles: [],
+    effects: [],
 
     selectedUnit: null,
     isGateOpen: false
@@ -70,7 +73,7 @@ let gameState = {
 // === DOM & CANVAS ===
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = false; // Pixel-art look
+ctx.imageSmoothingEnabled = false;
 
 const uiWave = document.getElementById('wave-display');
 const uiGold = document.getElementById('gold-display');
@@ -79,67 +82,39 @@ const uiMessage = document.getElementById('status-message');
 
 // === INITIALISERING ===
 function init() {
-    console.log("Initialiserer Castle Defense v12...");
-    
-    // 1. Generer grafikk (Sprites)
+    console.log("Initialiserer Castle Defense v13...");
     generatePlaceholderSprites();
-    
-    // 2. Bygg verden
     createLevelGeometry();
-    
-    // 3. Setup input
     setupEventListeners();
     addGateControl();
-    
-    // 4. Start loop
     requestAnimationFrame(gameLoop);
 }
 
-// === GENERERING AV GRAFIKK ===
+// === GENERERING AV GRAFIKK (Uendret fra v12) ===
 function generatePlaceholderSprites() {
     const createSheet = (id, color, size, isBoss = false) => {
         const c = document.createElement('canvas');
         c.width = size * 8; c.height = size;
         const x = c.getContext('2d');
-        
-        // Helper for drawing body parts
         const drawFrame = (idx, legOff, armAttack) => {
             const ox = idx * size; const cx = ox + size/2; const cy = size/2;
             x.fillStyle = color; x.strokeStyle = color; x.lineWidth = isBoss ? 4 : 2;
-            
-            // Hode
             x.beginPath(); x.arc(cx, cy - (size*0.25), size*0.15, 0, Math.PI*2); x.fill();
-            // Kropp
             x.beginPath(); x.moveTo(cx, cy - (size*0.1)); x.lineTo(cx, cy + (size*0.2)); x.stroke();
-            // Ben
             x.beginPath(); x.moveTo(cx, cy + (size*0.2)); x.lineTo(cx - (size*0.1) + legOff, cy + (size*0.45));
             x.moveTo(cx, cy + (size*0.2)); x.lineTo(cx + (size*0.1) - legOff, cy + (size*0.45)); x.stroke();
-            // Armer
             x.beginPath();
-            if (armAttack) {
-                x.moveTo(cx, cy); x.lineTo(cx + (size*0.35), cy); // Attack pose
-            } else {
-                x.moveTo(cx, cy); x.lineTo(cx - (size*0.15), cy + (size*0.15) - legOff);
-                x.moveTo(cx, cy); x.lineTo(cx + (size*0.15), cy + (size*0.15) + legOff);
-            }
+            if (armAttack) { x.moveTo(cx, cy); x.lineTo(cx + (size*0.35), cy); } 
+            else { x.moveTo(cx, cy); x.lineTo(cx - (size*0.15), cy + (size*0.15) - legOff); x.moveTo(cx, cy); x.lineTo(cx + (size*0.15), cy + (size*0.15) + legOff); }
             x.stroke();
-            
-            // Våpen (Enkel strek)
-            if (id === 'archer') {
-                x.strokeStyle = "brown";
-                x.beginPath(); x.arc(cx + (armAttack?10:5), cy, 8, -1, 1); x.stroke(); // Bue
-            }
+            if (id === 'archer') { x.strokeStyle = "brown"; x.beginPath(); x.arc(cx + (armAttack?10:5), cy, 8, -1, 1); x.stroke(); }
         };
-
-        // Tegn frames: 0=Idle, 1-4=Walk, 5-6=Attack
         drawFrame(0, 0, false);
         drawFrame(1, -5, false); drawFrame(2, 0, false); drawFrame(3, 5, false); drawFrame(4, 0, false);
         drawFrame(5, 10, true); drawFrame(6, 5, true);
-
         const img = new Image(); img.src = c.toDataURL();
         Assets.sprites[id] = img;
     };
-
     createSheet('peasant', GameConfig.units.peasant.color, 32);
     createSheet('archer', GameConfig.units.archer.color, 32);
     createSheet('knight', GameConfig.units.knight.color, 32);
@@ -147,7 +122,7 @@ function generatePlaceholderSprites() {
     createSheet('boss', '#800000', 48, true);
 }
 
-// === GEOMETRI ===
+// === GEOMETRI (Oppdatert med 5 slots på muren) ===
 function createLevelGeometry() {
     const startAngle = Math.PI * 1.1; const endAngle = Math.PI * 1.9; const totalSegments = GameConfig.wallSegments;
     gameState.walls = []; gameState.slots = [];
@@ -166,13 +141,24 @@ function createLevelGeometry() {
             const bx = GameConfig.baseX + (GameConfig.wallRadius + dist) * Math.cos(angle);
             const by = GameConfig.baseY + (GameConfig.wallRadius + dist) * Math.sin(angle);
             const sideAngle = angle + Math.PI / 2;
-            const finalX = bx + (offsetSide * 15) * Math.cos(sideAngle);
-            const finalY = by + (offsetSide * 15) * Math.sin(sideAngle);
+            const finalX = bx + (offsetSide * 10) * Math.cos(sideAngle); // 10px spacing
+            const finalY = by + (offsetSide * 10) * Math.sin(sideAngle);
             gameState.slots.push({ id: `slot-${type}-${i}-${label}`, type: type, parentWallId: wallSegment.id, x: finalX, y: finalY, occupied: false, unit: null });
         };
-        createSlot('outside', 60, -1, 'A'); createSlot('outside', 60, 1, 'B');
-        createSlot('wall', 0, -1, 'A'); createSlot('wall', 0, 1, 'B');
-        createSlot('inside', -60, -1, 'A'); createSlot('inside', -60, 1, 'B');
+
+        // 2 slots ute
+        createSlot('outside', 60, -1.5, 'A'); createSlot('outside', 60, 1.5, 'B');
+        
+        // 5 slots PÅ MUREN (Oppdatert)
+        // Offsetter: -2, -1, 0, 1, 2 (ganger spacing på 10px)
+        createSlot('wall', 0, -2, 'A');
+        createSlot('wall', 0, -1, 'B');
+        createSlot('wall', 0, 0, 'C');
+        createSlot('wall', 0, 1, 'D');
+        createSlot('wall', 0, 2, 'E');
+        
+        // 2 slots inne
+        createSlot('inside', -60, -1.5, 'A'); createSlot('inside', -60, 1.5, 'B');
     }
 }
 
@@ -194,7 +180,7 @@ function addGateControl() {
     }
 }
 
-// === UNIT CONTROLS ===
+// === CONTROLS ===
 function buyUnit(type) {
     const stats = GameConfig.units[type];
     if (gameState.money >= stats.cost) {
@@ -229,7 +215,7 @@ function handleCanvasClick(event) {
 
     let clickedUnit = null; let clickedSlot = null;
     gameState.units.forEach(u => { if(Math.sqrt((u.x-mouseX)**2+(u.y-mouseY)**2) < 15) clickedUnit = u; });
-    gameState.slots.forEach(s => { if(Math.sqrt((s.x-mouseX)**2+(s.y-mouseY)**2) < 12) clickedSlot = s; });
+    gameState.slots.forEach(s => { if(Math.sqrt((s.x-mouseX)**2+(s.y-mouseY)**2) < 8) clickedSlot = s; }); // Mindre klikke-radius på slots siden de er tette
 
     if (gameState.selectedUnit && clickedSlot) { moveUnitToSlot(gameState.selectedUnit, clickedSlot); return; }
     if (clickedUnit) { selectUnit(clickedUnit); return; }
@@ -272,16 +258,72 @@ function update(dt) {
 
     gameState.units.forEach(unit => updateUnit(unit, dt));
     for (let i = gameState.enemies.length - 1; i >= 0; i--) { updateEnemy(gameState.enemies[i], dt, i); }
+    
+    // NYTT: Oppdater prosjektiler og effekter
+    updateProjectiles(dt);
+    updateEffects(dt);
 
     if (gameState.gameActive && gameState.enemiesToSpawn === 0 && gameState.enemies.length === 0) endWave();
     if (gameState.baseHealth <= 0) { gameState.isPaused = true; uiMessage.innerText = "GAME OVER!"; }
 }
 
+// === NY LOGIKK FOR PROSJEKTILER ===
+function spawnProjectile(source, target, damage, type) {
+    gameState.projectiles.push({
+        x: source.x,
+        y: source.y,
+        target: target, // Vi lagrer referansen til målet for "homing" (enklest) eller lastKnownPos
+        speed: type === 'arrow' ? 200 : 0,
+        damage: damage,
+        type: type,
+        active: true
+    });
+}
+
+function updateProjectiles(dt) {
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const p = gameState.projectiles[i];
+        if (!p.active) { gameState.projectiles.splice(i, 1); continue; }
+
+        if (p.type === 'arrow') {
+            // Hvis målet er dødt, fjern pilen (eller la den fly til siste posisjon, men dette er enklest)
+            if (p.target.hp <= 0) { p.active = false; continue; }
+
+            const dx = p.target.x - p.x;
+            const dy = p.target.y - p.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if (dist < 10) {
+                // Treff!
+                p.target.hp -= p.damage;
+                p.active = false;
+            } else {
+                // Flytt pilen
+                p.x += (dx / dist) * p.speed * dt;
+                p.y += (dy / dist) * p.speed * dt;
+                p.angle = Math.atan2(dy, dx); // For tegning
+            }
+        }
+    }
+}
+
+function spawnEffect(x, y, type) {
+    gameState.effects.push({ x: x, y: y, type: type, life: 0.2 }); // Lever i 0.2 sekunder
+}
+
+function updateEffects(dt) {
+    for (let i = gameState.effects.length - 1; i >= 0; i--) {
+        const e = gameState.effects[i];
+        e.life -= dt;
+        if (e.life <= 0) gameState.effects.splice(i, 1);
+    }
+}
+
+
 // === LOGIKK: VÅRE SOLDATER ===
 function updateUnit(unit, dt) {
     if (unit.cooldownTimer > 0) unit.cooldownTimer -= dt;
 
-    // 1. Bevegelse
     let isMoving = false;
     if (unit.state === 'MOVING' && unit.targetSlot) {
         const dx = unit.targetSlot.x - unit.x;
@@ -300,10 +342,7 @@ function updateUnit(unit, dt) {
         }
     }
 
-    // 2. Kamp (Skilt ut for oversikt)
     const isAttacking = handleUnitCombat(unit);
-
-    // 3. Animasjonsoppdatering
     updateAnimationState(unit, isMoving, isAttacking, dt);
 }
 
@@ -311,33 +350,39 @@ function handleUnitCombat(unit) {
     let closestEnemy = null;
     let minDistance = Infinity;
 
-    // Finn nærmeste fiende
     gameState.enemies.forEach(enemy => {
         const d = Math.sqrt((enemy.x - unit.x)**2 + (enemy.y - unit.y)**2);
         if (d < minDistance) { minDistance = d; closestEnemy = enemy; }
     });
 
-    // Angrip hvis innenfor rekkevidde
     if (closestEnemy && minDistance <= unit.stats.range) {
-        unit.facingRight = (closestEnemy.x - unit.x) > 0; // Snu mot fienden
+        unit.facingRight = (closestEnemy.x - unit.x) > 0;
         
         if (unit.cooldownTimer <= 0) {
-            closestEnemy.hp -= unit.stats.damage;
             unit.cooldownTimer = unit.stats.cooldown;
-            // Returner true for å trigge animasjon
-            return true;
+            
+            if (unit.stats.type === 'ranged') {
+                // Spawn Pil
+                spawnProjectile(unit, closestEnemy, unit.stats.damage, 'arrow');
+            } else {
+                // Melee: Direkte skade + Visuell effekt
+                closestEnemy.hp -= unit.stats.damage;
+                // Legg til "Slash" effekt midt mellom soldat og fiende
+                const midX = (unit.x + closestEnemy.x) / 2;
+                const midY = (unit.y + closestEnemy.y) / 2;
+                spawnEffect(midX, midY, 'slash');
+            }
+            return true; // Trigget angrep
         }
     }
     return false;
 }
 
 function updateAnimationState(entity, isMoving, isAttacking, dt) {
-    // Bestem state
     if (isAttacking) {
         entity.animState = 'attack';
-        entity.animFrame = 0; // Start slaget
+        entity.animFrame = 0;
     } else if (entity.animState === 'attack') {
-        // La angrepet spille ferdig før vi bytter tilbake
         const def = Assets.definitions[entity.spriteId];
         const frames = def.anims.attack;
         if (entity.animFrame >= frames.length - 1) {
@@ -347,7 +392,6 @@ function updateAnimationState(entity, isMoving, isAttacking, dt) {
         entity.animState = isMoving ? 'walk' : 'idle';
     }
 
-    // Timer for frames
     const def = Assets.definitions[entity.spriteId];
     entity.animTimer += dt;
     if (entity.animTimer >= (1 / def.fps)) {
@@ -362,11 +406,7 @@ function updateEnemy(enemy, dt, index) {
     if (enemy.hp <= 0) {
         gameState.enemies.splice(index, 1); gameState.money += 15; updateUI(); return;
     }
-
-    // Logikk for bevegelse og angrep
     const action = handleEnemyLogic(enemy, dt);
-    
-    // Oppdater animasjon
     updateAnimationState(enemy, action === 'MOVING', action === 'ATTACKING', dt);
 }
 
@@ -377,32 +417,29 @@ function handleEnemyLogic(enemy, dt) {
     
     enemy.facingRight = dx > 0;
 
-    // Sjekk murer
     for (let w of gameState.walls) {
         if (!w.isBroken) {
-            if (w.isGate && gameState.isGateOpen) continue; // Ignorer åpen port
+            if (w.isGate && gameState.isGateOpen) continue;
             const wDist = Math.sqrt((w.x - enemy.x)**2 + (w.y - enemy.y)**2);
             if (wDist < (w.radius + enemy.radius)) {
-                // Angrip mur
                 enemy.attackTimer -= dt;
                 if (enemy.attackTimer <= 0) {
                     w.hp -= enemy.damage;
                     enemy.attackTimer = 1.0;
                     if (w.hp <= 0) { w.hp = 0; w.isBroken = true; }
-                    return 'ATTACKING'; // Trigget slag
+                    spawnEffect(enemy.x + (w.x-enemy.x)*0.5, enemy.y + (w.y-enemy.y)*0.5, 'slash'); // Fiende slash
+                    return 'ATTACKING';
                 }
-                return 'ATTACKING'; // Venter på cooldown
+                return 'ATTACKING';
             }
         }
     }
 
-    // Bevegelse mot base
     if (dist > 30) {
         enemy.x += (dx / dist) * enemy.speed * dt;
         enemy.y += (dy / dist) * enemy.speed * dt;
         return 'MOVING';
     } else {
-        // Angrip base
         gameState.baseHealth -= (enemy.damage * dt);
         updateUI();
         return 'ATTACKING';
@@ -441,16 +478,13 @@ function spawnEnemy() {
 
 // === TEGNING ===
 function draw() {
-    // Bakgrunn
     ctx.fillStyle = "#27ae60"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Base
     ctx.fillStyle = "#8e44ad"; ctx.beginPath(); ctx.arc(GameConfig.baseX, GameConfig.baseY, 25, 0, Math.PI*2); ctx.fill();
 
     // Murer
     gameState.walls.forEach(wall => {
         ctx.save(); ctx.translate(wall.x, wall.y); ctx.rotate(wall.angle + Math.PI/2);
-        ctx.fillStyle = "#8d6e63"; ctx.fillRect(-10, 20, 20, 30); // Stige
+        ctx.fillStyle = "#8d6e63"; ctx.fillRect(-10, 20, 20, 30);
         if (!wall.isBroken) {
             ctx.fillStyle = (wall.isGate && gameState.isGateOpen) ? "#34495e" : (wall.isGate ? "#5d4037" : "#7f8c8d");
             if (wall.isGate && gameState.isGateOpen) { ctx.strokeStyle = "#5d4037"; ctx.lineWidth=2; ctx.strokeRect(-wall.width/2, -wall.height/2, wall.width, wall.height); }
@@ -467,7 +501,7 @@ function draw() {
     gameState.slots.forEach(slot => {
         const show = (gameState.selectedUnit && gameState.selectedUnit.state!=='MOVING') || slot.unit;
         if(show) {
-            ctx.beginPath(); ctx.arc(slot.x, slot.y, 6, 0, Math.PI*2);
+            ctx.beginPath(); ctx.arc(slot.x, slot.y, 4, 0, Math.PI*2); // Mindre sirkler
             if(!slot.unit && gameState.selectedUnit) {
                  const illegal = (gameState.selectedUnit.stats.type==='melee' && slot.type==='wall');
                  ctx.fillStyle = illegal ? "rgba(255,0,0,0.3)" : "rgba(255,255,255,0.4)";
@@ -476,9 +510,32 @@ function draw() {
         }
     });
 
-    // Enheter
     gameState.units.forEach(u => drawSprite(u));
     gameState.enemies.forEach(e => drawSprite(e));
+
+    // NYTT: Tegn prosjektiler
+    gameState.projectiles.forEach(p => {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = "#fff";
+        // Enkel pil: En strek med en klump
+        ctx.fillRect(-5, -1, 10, 2); // Skaft
+        ctx.fillStyle = "#aaa";
+        ctx.fillRect(2, -2, 3, 4);   // Spiss
+        ctx.restore();
+    });
+
+    // NYTT: Tegn effekter (Slash)
+    gameState.effects.forEach(e => {
+        if (e.type === 'slash') {
+            ctx.strokeStyle = "rgba(255, 255, 255, " + (e.life * 5) + ")"; // Fader ut
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, 15, 0, Math.PI*2); // Enkel sirkel-slash
+            ctx.stroke();
+        }
+    });
 }
 
 function drawSprite(entity) {
@@ -493,21 +550,11 @@ function drawSprite(entity) {
     ctx.save();
     ctx.translate(entity.x, entity.y);
     if (!entity.facingRight) ctx.scale(-1, 1);
-
-    // Skygge
     ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(0, 10, 8, 4, 0, 0, Math.PI*2); ctx.fill();
-
-    // Sprite
     ctx.drawImage(img, sx, 0, def.w, def.h, -def.w/2, -def.h/2, def.w, def.h);
-    
-    // Debug Hitbox
-    if (GameConfig.debugMode) {
-        ctx.strokeStyle = "red"; ctx.strokeRect(-def.w/2, -def.h/2, def.w, def.h);
-    }
-    
+    if (GameConfig.debugMode) { ctx.strokeStyle = "red"; ctx.strokeRect(-def.w/2, -def.h/2, def.w, def.h); }
     ctx.restore();
 
-    // HP Bar & Seleksjon
     if (entity.hp < (entity.maxHp || 100) || entity === gameState.selectedUnit) {
         const max = entity.maxHp || 100;
         const hpP = entity.hp / max;
@@ -524,4 +571,4 @@ function drawSprite(entity) {
 }
 
 window.onload = init;
-/* Version: #12 */
+/* Version: #13 */
