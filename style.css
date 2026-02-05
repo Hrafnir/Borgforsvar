@@ -1,145 +1,114 @@
-/* Version: #2 */
+/* Version: #8 */
 
-/* === GENERELT OPPSETT === */
 body {
-    background-color: #2c3e50; /* Mørk blågrå bakgrunn for nettsiden */
-    color: #ecf0f1; /* Lys tekst */
+    background-color: #1a1a1a;
+    color: #eee;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;
     padding: 0;
     display: flex;
-    justify-content: center; /* Sentrerer alt innhold horisontalt */
-    min-height: 100vh;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden; /* Hindrer scrollbar på selve siden */
 }
 
-#main-wrapper {
-    width: 1020px; /* Litt bredere enn canvaset */
+#game-wrapper {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 20px;
+    width: 1020px;
 }
 
-header h1 {
-    margin: 10px 0 20px 0;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: 2px 2px 4px #000;
+/* === RESSURS BAR (TOPP) === */
+#resource-bar {
+    width: 1000px;
+    background-color: #2c3e50;
+    display: flex;
+    justify-content: space-around;
+    padding: 10px 0;
+    border-bottom: 2px solid #1a252f;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    z-index: 10;
 }
 
-/* === SPILLOMRÅDET (CANVAS) === */
+.res-item {
+    font-size: 1.2rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* === CANVAS === */
 #canvas-container {
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-    border: 5px solid #34495e;
-    border-radius: 4px;
-    background-color: #87CEEB; /* Midlertidig himmel-farge */
-    line-height: 0; /* Fjerner ekstra mellomrom under canvas */
+    position: relative;
+    border: 4px solid #4a5a6a;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
 }
 
 canvas {
-    display: block; /* Sikrer at canvas oppfører seg som en blokk */
-    cursor: crosshair; /* Endrer muspekeren til et sikte inne i spillet */
+    display: block;
+    background-color: #000; /* Bakgrunn til vi tegner gress */
+    cursor: default;
 }
 
-/* === STATISTIKK BAR === */
-#stats-bar {
+/* Overlay for beskjeder */
+#overlay-ui {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    pointer-events: none; /* Lar oss klikke gjennom teksten */
+}
+
+#status-message {
+    background-color: rgba(0, 0, 0, 0.6);
+    padding: 5px 10px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 0.9rem;
+}
+
+/* === HANDLINGSPANEL (BUNN) === */
+#action-panel {
     width: 1000px;
-    background-color: #34495e;
+    height: 100px;
+    background-color: #2c3e50;
     display: flex;
-    justify-content: space-between;
-    padding: 10px 0;
-    margin-top: 5px;
-    border-radius: 0 0 4px 4px;
-    border: 1px solid #2c3e50;
+    border-top: 2px solid #1a252f;
 }
 
-.stat-box {
+.panel-section {
     flex: 1;
-    text-align: center;
-    font-weight: bold;
-    border-right: 1px solid #7f8c8d;
+    padding: 10px;
+    border-right: 1px solid #34495e;
 }
 
-.stat-box:last-child {
-    border-right: none;
+.panel-section h3 {
+    margin: 0 0 10px 0;
+    font-size: 0.9rem;
+    color: #95a5a6;
+    text-transform: uppercase;
 }
 
-.stat-box span {
-    color: #f1c40f; /* Gullfarge på tallene */
-}
-
-/* === KONTROLLPANEL / BUTIKK === */
-#controls-panel {
-    width: 1000px;
-    margin-top: 20px;
-    display: flex;
-    justify-content: space-between;
-    gap: 15px;
-}
-
-.control-group {
-    background-color: #34495e;
-    padding: 15px;
-    border-radius: 8px;
-    flex: 1; /* Alle gruppene tar like mye plass */
-    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-}
-
-.control-group h3 {
-    margin-top: 0;
-    border-bottom: 2px solid #7f8c8d;
-    padding-bottom: 5px;
-    font-size: 1rem;
-    color: #bdc3c7;
-}
-
-/* === KNAPPER === */
 .game-btn {
     display: block;
     width: 100%;
-    padding: 10px;
-    margin-bottom: 8px;
+    padding: 8px;
+    background-color: #3498db;
     border: none;
-    border-radius: 4px;
-    background-color: #95a5a6;
-    color: #2c3e50;
-    font-weight: bold;
+    color: white;
     cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: left;
+    font-weight: bold;
+    border-radius: 3px;
+    margin-bottom: 5px;
 }
 
-.game-btn:hover {
-    background-color: #bdc3c7;
-    transform: translateY(-2px); /* Løfter knappen litt opp */
+.game-btn:hover { background-color: #2980b9; }
+.game-btn:active { transform: translateY(1px); }
+
+#selection-info {
+    font-size: 0.9rem;
+    color: #ecf0f1;
 }
 
-.game-btn:active {
-    transform: translateY(0);
-}
-
-/* Spesielle farger for ulike knapper */
-#btn-start-wave {
-    background-color: #e74c3c; /* Rød */
-    color: white;
-    text-align: center;
-    font-size: 1.1em;
-}
-
-#btn-start-wave:hover {
-    background-color: #c0392b;
-}
-
-#btn-pause {
-    background-color: #f39c12; /* Oransje */
-    color: white;
-    text-align: center;
-}
-
-/* === SEKSJONS-SPESIFIKKE JUSTERINGER === */
-/* Gjør knappene for enheter litt mer tydelige */
-#btn-buy-peasant { border-left: 5px solid #8e44ad; }
-#btn-buy-archer { border-left: 5px solid #27ae60; }
-#btn-buy-knight { border-left: 5px solid #2980b9; }
-
-/* Version: #2 */
+/* Version: #8 */
