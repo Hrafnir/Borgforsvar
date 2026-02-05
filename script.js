@@ -1,8 +1,15 @@
-/* Version: #22 - Wave System, Repair & Healing */
+/* Version: #23 - RTS Controls, Group Selection & Combat Fixes */
 
 // === HJELPEFUNKSJONER ===
 function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
 function randomRange(min, max) { return Math.random() * (max - min) + min; }
+// Sjekk om punkt p er inni rektangel r {x, y, w, h} (håndterer negativ w/h)
+function pointInRect(px, py, rx, ry, rw, rh) {
+    let x = rx, y = ry, w = rw, h = rh;
+    if (w < 0) { x += w; w = -w; }
+    if (h < 0) { y += h; h = -h; }
+    return px >= x && px <= x + w && py >= y && py <= y + h;
+}
 
 // === KONFIGURASJON ===
 const GameConfig = {
@@ -12,10 +19,8 @@ const GameConfig = {
     worldHeight: 2000,
     tileSize: 32,
     debugMode: false,
-    
-    // Wave Settings
-    firstWaveTime: 120, // 2 minutter (sekunder)
-    waveInterval: 300   // 5 minutter
+    firstWaveTime: 120, 
+    waveInterval: 300   
 };
 
 const ResourceTypes = {
@@ -34,9 +39,9 @@ const Buildings = {
 };
 
 const UnitTypes = {
-    peasant: { name: "Fotsoldat", cost: { food: 50 }, damage: 5, range: 120, cooldown: 1.0, spriteId: 'peasant', speed: 60, maxHp: 100 },
-    archer:  { name: "Bueskytter", cost: { food: 50, wood: 25 }, damage: 8, range: 300, cooldown: 1.5, spriteId: 'archer', speed: 70, req: 'BOWYER', maxHp: 80 },
-    knight:  { name: "Ridder", cost: { food: 50, iron: 20 }, damage: 20, range: 120, cooldown: 0.8, spriteId: 'knight', speed: 50, maxHp: 200 }
+    peasant: { name: "Fotsoldat", cost: { food: 50 }, damage: 8, range: 40, cooldown: 1.0, spriteId: 'peasant', speed: 80, maxHp: 100 },
+    archer:  { name: "Bueskytter", cost: { food: 50, wood: 25 }, damage: 10, range: 250, cooldown: 1.5, spriteId: 'archer', speed: 90, req: 'BOWYER', maxHp: 80, projectile: true },
+    knight:  { name: "Ridder", cost: { food: 50, iron: 20 }, damage: 25, range: 40, cooldown: 0.8, spriteId: 'knight', speed: 70, maxHp: 200 }
 };
 
 // === ASSETS ===
@@ -56,18 +61,20 @@ let gameState = {
     resources: { food: 200, wood: 100, stone: 50, iron: 0 },
     population: { current: 0, max: 0 },
     camera: { x: 500, y: 500 },
-    
-    // Wave System
     wave: { number: 1, timer: GameConfig.firstWaveTime, active: false },
     
     worldObjects: [],
     workers: [],      
     soldiers: [],
     enemies: [],
-    effects: [], // Visuelle effekter
+    projectiles: [], // Piler etc
+    effects: [],     // Visuelle effekter
     keep: null,       
     
-    selectedEntity: null,
+    // INPUT STATE
+    selectedUnits: [], // Array for multi-select
+    selectionBox: { active: false, startX: 0, startY: 0, curX: 0, curY: 0 }, // For å tegne boksen
+    
     keys: { w: false, a: false, s: false, d: false },
     buildMode: null, dragStart: null, mouseWorld: { x: 0, y: 0 },
     lastTime: 0
@@ -92,7 +99,7 @@ const ui = {
 
 // === INITIALISERING ===
 function init() {
-    console.log("Initialiserer Combat Update (v22)...");
+    console.log("Initialiserer RTS v23...");
     generatePlaceholderSprites();
     createWorld();
     
@@ -157,12 +164,14 @@ function createWorld() {
 
 function spawnResource(def, x, y) { gameState.worldObjects.push({ id: Math.random().toString(36), type: 'resource', resType: def.type, name: def.name, color: def.color, icon: def.icon, capacity: def.capacity, amount: def.capacity, harvestTime: def.harvestTime, x: x, y: y, w: 32, h: 32 }); }
 function spawnWorker(x, y) { gameState.workers.push({ id: Math.random().toString(36), type: 'worker', name: 'Arbeider', x: x, y: y, w: 32, h: 32, speed: 90, state: 'IDLE', target: null, carryType: null, carryAmount: 0, maxCarry: 10, gatherTimer: 0, spriteId: 'worker', animState: 'idle', animFrame: 0, animTimer: 0, facingRight: true }); }
-function spawnSoldier(def, x, y) { gameState.soldiers.push({ id: Math.random().toString(36), type: 'soldier', name: def.name, x: x, y: y, w: 32, h: 32, speed: def.speed, stats: def, state: 'IDLE', target: null, spriteId: def.spriteId, animState: 'idle', animFrame: 0, animTimer: 0, facingRight: true, hp: def.maxHp, maxHp: def.maxHp, garrisoned: false }); }
+function spawnSoldier(def, x, y) { gameState.soldiers.push({ id: Math.random().toString(36), type: 'soldier', name: def.name, x: x, y: y, w: 32, h: 32, speed: def.speed, stats: def, state: 'IDLE', target: null, spriteId: def.spriteId, animState: 'idle', animFrame: 0, animTimer: 0, facingRight: true, hp: def.maxHp, maxHp: def.maxHp, garrisoned: false, cooldownTimer: 0 }); }
 
-// === INPUT ===
+// === INPUT: RTS CONTROLS ===
 function setupInput() {
     canvas.addEventListener('mousedown', (e) => {
         const mouse = getMouseWorldPos(e);
+        
+        // 1. Byggemodus
         if (gameState.buildMode) {
             if (e.button === 0) {
                 if (['HOUSE','BOWYER','MASON'].includes(gameState.buildMode)) placeSingleBuilding(snapToGrid(mouse.x, mouse.y), gameState.buildMode);
@@ -170,16 +179,54 @@ function setupInput() {
             }
             return;
         }
-        if (e.button === 0) selectEntity(mouse.x, mouse.y);
+
+        // 2. Start Selection Box (Venstreklikk)
+        if (e.button === 0) {
+            gameState.selectionBox.active = true;
+            gameState.selectionBox.startX = mouse.x;
+            gameState.selectionBox.startY = mouse.y;
+            gameState.selectionBox.curX = mouse.x;
+            gameState.selectionBox.curY = mouse.y;
+        }
     });
 
-    canvas.addEventListener('mousemove', (e) => gameState.mouseWorld = getMouseWorldPos(e));
+    canvas.addEventListener('mousemove', (e) => {
+        const mouse = getMouseWorldPos(e);
+        gameState.mouseWorld = mouse;
+        
+        if (gameState.selectionBox.active) {
+            gameState.selectionBox.curX = mouse.x;
+            gameState.selectionBox.curY = mouse.y;
+        }
+    });
     
     canvas.addEventListener('mouseup', (e) => {
+        const mouse = getMouseWorldPos(e);
+
+        // 1. Fullfør Bygging
         if (gameState.buildMode && gameState.dragStart) {
-            const end = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
+            const end = snapToGrid(mouse.x, mouse.y);
             placeWallBlueprints(gameState.dragStart, end);
             gameState.dragStart = null;
+        }
+
+        // 2. Fullfør Selection Box
+        if (gameState.selectionBox.active) {
+            gameState.selectionBox.active = false;
+            
+            // Beregn boks
+            const sx = gameState.selectionBox.startX;
+            const sy = gameState.selectionBox.startY;
+            const w = mouse.x - sx;
+            const h = mouse.y - sy;
+
+            // Hvis bare et klikk (veldig liten boks), velg enhet under musen
+            if (Math.abs(w) < 5 && Math.abs(h) < 5) {
+                selectSingleEntity(mouse.x, mouse.y);
+            } else {
+                // Rektangel markering
+                selectUnitsInRect(sx, sy, w, h);
+            }
         }
     });
 
@@ -187,13 +234,16 @@ function setupInput() {
         e.preventDefault();
         if (gameState.buildMode) return;
         const mouse = getMouseWorldPos(e);
-        if (gameState.selectedEntity && gameState.selectedEntity.type === 'worker') handleWorkerCommand(gameState.selectedEntity, mouse.x, mouse.y);
-        else if (gameState.selectedEntity && gameState.selectedEntity.type === 'soldier') handleSoldierCommand(gameState.selectedEntity, mouse.x, mouse.y);
+        
+        // HØYREKLIKK: Gi ordre til valgte enheter
+        if (gameState.selectedUnits.length > 0) {
+            issueCommandToSelected(mouse.x, mouse.y);
+        }
     });
 
     window.addEventListener('keydown', (e) => {
         if(e.key==='w') gameState.keys.w=true; if(e.key==='a') gameState.keys.a=true; if(e.key==='s') gameState.keys.s=true; if(e.key==='d') gameState.keys.d=true;
-        if(e.key==='Escape') setBuildMode(null);
+        if(e.key==='Escape') { setBuildMode(null); gameState.selectedUnits = []; updateUI(); }
     });
     window.addEventListener('keyup', (e) => {
         if(e.key==='w') gameState.keys.w=false; if(e.key==='a') gameState.keys.a=false; if(e.key==='s') gameState.keys.s=false; if(e.key==='d') gameState.keys.d=false;
@@ -211,37 +261,104 @@ function setupInput() {
     ui.btnCancel.onclick = () => setBuildMode(null);
 }
 
-// === KOMMANDOER ===
-function handleWorkerCommand(w, wx, wy) {
-    let target = null;
-    gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y) < 25) target = o; });
+// === UNIT SELECTION & COMMANDS ===
+function selectSingleEntity(wx, wy) {
+    gameState.selectedUnits = [];
+    let found = null;
     
-    if (target) {
-        if (target.type === 'resource') { w.state='MOVING'; w.target=target; w.jobType='GATHER'; ui.msg.innerText="Samler ressurser."; }
-        else if ((target.type === 'wall' || target.type === 'building') && !target.built) {
-            w.state='MOVING'; w.target=target; w.jobType='BUILD'; ui.msg.innerText="Går for å bygge.";
+    // Prioriter soldater/arbeidere
+    [...gameState.soldiers, ...gameState.workers].forEach(u => { if(dist(wx, wy, u.x, u.y) < 20) found = u; });
+    
+    // Hvis ingen enhet, sjekk bygg
+    if (!found) gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y) < 20) found = o; });
+
+    if (found) gameState.selectedUnits.push(found);
+    updateSelectionUI();
+}
+
+function selectUnitsInRect(x, y, w, h) {
+    gameState.selectedUnits = [];
+    [...gameState.soldiers, ...gameState.workers].forEach(u => {
+        if (pointInRect(u.x, u.y, x, y, w, h)) {
+            gameState.selectedUnits.push(u);
         }
-        else if ((target.type === 'wall' || target.type === 'building') && target.built && target.hp < target.maxHp) {
-            // REPARASJON
-            w.state='MOVING'; w.target=target; w.jobType='REPAIR'; ui.msg.innerText="Går for å reparere.";
+    });
+    updateSelectionUI();
+}
+
+function issueCommandToSelected(wx, wy) {
+    // Sjekk hva vi høyreklikket på
+    let target = null;
+    
+    // Fiende?
+    gameState.enemies.forEach(e => { if (dist(wx, wy, e.x, e.y) < 25) target = e; });
+    // Bygning/Ressurs?
+    if (!target) gameState.worldObjects.forEach(o => { if (dist(wx, wy, o.x, o.y) < 25) target = o; });
+
+    gameState.selectedUnits.forEach((u, index) => {
+        // Enkel flokk-logikk: Spre målet litt basert på indeks
+        const offsetX = (index % 3) * 15 - 15;
+        const offsetY = Math.floor(index / 3) * 15;
+
+        if (u.type === 'worker') {
+            if (target && target.type === 'resource') { u.state='MOVING'; u.target=target; u.jobType='GATHER'; }
+            else if (target && (target.type === 'wall' || target.type === 'building') && !target.built) { u.state='MOVING'; u.target=target; u.jobType='BUILD'; }
+            else if (target && (target.type === 'wall' || target.type === 'building') && target.built && target.hp < target.maxHp) { u.state='MOVING'; u.target=target; u.jobType='REPAIR'; }
+            else { u.state='MOVING'; u.target={x: wx + offsetX, y: wy + offsetY}; u.jobType='MOVE'; }
         }
-        else { w.state='MOVING'; w.target={x: wx, y: wy}; w.jobType='MOVE'; ui.msg.innerText="Går."; }
-    } else {
-        w.state='MOVING'; w.target={x: wx, y: wy}; w.jobType='MOVE'; ui.msg.innerText="Går.";
+        else if (u.type === 'soldier') {
+            if (target && target.type === 'enemy') { 
+                // Attack specific enemy
+                u.state = 'MOVING'; u.target = target; u.jobType = 'ATTACK_TARGET';
+            }
+            else if (target && target.type === 'wall' && target.built) {
+                u.state='MOVING'; u.target=target; u.jobType='GARRISON';
+            }
+            else { 
+                // Move command
+                u.state = 'MOVING'; 
+                u.target = {x: wx + offsetX, y: wy + offsetY}; 
+                u.jobType = 'MOVE'; 
+                u.garrisoned = false; 
+            }
+        }
+    });
+    
+    // Vis feedback
+    const count = gameState.selectedUnits.length;
+    if (count > 0) {
+        spawnEffect(wx, wy, 'click'); // Visuell prikk der man klikket
+        ui.msg.innerText = `Ordre gitt til ${count} enheter.`;
     }
 }
 
-function handleSoldierCommand(s, wx, wy) {
-    let wall = null;
-    gameState.worldObjects.forEach(o => {
-        if ((o.type === 'wall') && o.built && dist(wx, wy, o.x, o.y) < 20) wall = o;
-    });
-
-    if (wall) { s.target = wall; s.state = 'MOVING'; s.jobType = 'GARRISON'; ui.msg.innerText = "Går til post på mur."; }
-    else { s.target = {x: wx, y: wy}; s.state = 'MOVING'; s.jobType = 'MOVE'; s.garrisoned = false; ui.msg.innerText = "Soldat flytter seg."; }
+function updateSelectionUI() {
+    const count = gameState.selectedUnits.length;
+    if (count === 0) ui.selection.innerText = "Ingen valgt";
+    else if (count === 1) {
+        const u = gameState.selectedUnits[0];
+        ui.selection.innerText = `${u.type} (${u.hp}/${u.maxHp || u.stats?.maxHp})`;
+    } else {
+        ui.selection.innerText = `Valgt: ${count} enheter`;
+    }
 }
 
-// === SPILL-LOGIKK ===
+// === KOMMANDOER (Interne) ===
+function hasBuilding(tech) { if (!tech) return true; return gameState.worldObjects.some(o => o.type === 'building' && o.tech === tech && o.built); }
+function attemptSetBuildMode(mode) { if (Buildings[mode].req && !hasBuilding(Buildings[mode].req)) { ui.msg.innerText = `Krever ${Buildings[Buildings[mode].req].name}!`; return; } setBuildMode(mode); }
+function attemptTrainSoldier(type) { if (UnitTypes[type].req && !hasBuilding(UnitTypes[type].req)) { ui.msg.innerText = `Krever ${Buildings[UnitTypes[type].req].name}!`; return; } convertWorkerToSoldier(type); }
+function attemptCreateWorker() { if (gameState.population.current >= gameState.population.max) { ui.msg.innerText = "Befolkningsgrense nådd! Bygg hus."; return; } if (gameState.resources.food >= 50) { gameState.resources.food -= 50; spawnWorker(gameState.keep.x, gameState.keep.y + 60); updateUI(); ui.msg.innerText = "Ny arbeider!"; } else ui.msg.innerText = "Mangler mat (50)."; }
+function convertWorkerToSoldier(type) { const def = UnitTypes[type]; let canAfford = true; for (let res in def.cost) if (gameState.resources[res] < def.cost[res]) canAfford = false; if (!canAfford) { ui.msg.innerText = "Mangler ressurser."; return; } let candidate = gameState.workers.find(w => w.state === 'IDLE'); if (!candidate) { ui.msg.innerText = "Ingen ledige arbeidere!"; return; } for (let res in def.cost) gameState.resources[res] -= def.cost[res]; const idx = gameState.workers.indexOf(candidate); gameState.workers.splice(idx, 1); spawnSoldier(def, candidate.x, candidate.y); updateUI(); ui.msg.innerText = `${def.name} klar!`; }
+function setBuildMode(mode) { gameState.buildMode = mode; gameState.dragStart = null; document.querySelectorAll('.game-btn').forEach(b => b.classList.remove('active')); ui.btnCancel.classList.add('hidden'); if (mode) { ui.msg.innerText = `BYGG: ${mode}.`; ui.btnCancel.classList.remove('hidden'); } }
+function snapToGrid(x, y) { return { x: Math.floor(x/GameConfig.tileSize)*GameConfig.tileSize, y: Math.floor(y/GameConfig.tileSize)*GameConfig.tileSize }; }
+function placeSingleBuilding(pos, type) { const def = Buildings[type]; if (gameState.resources[def.costType] < def.cost) { ui.msg.innerText = "Mangler ressurser."; return; } gameState.resources[def.costType] -= def.cost; updateUI(); gameState.worldObjects.push({ id: Math.random().toString(36), type: 'building', subType: type, x: pos.x+16, y: pos.y+16, w: 32, h: 32, spriteId: def.spriteId, hp: def.hp, maxHp: def.hp, built: false, progress: 0, buildTime: def.buildTime, popBonus: def.popBonus||0, tech: def.tech }); ui.msg.innerText = "Bygging startet."; }
+function placeWallBlueprints(start, end) { const typeDef = Buildings[gameState.buildMode]; const dx = end.x - start.x; const dy = end.y - start.y; const distVal = dist(0, 0, dx, dy); const count = Math.ceil(distVal / GameConfig.tileSize); if (count <= 0) return; const totalCost = count * typeDef.cost; if (gameState.resources[typeDef.costType] < totalCost) { ui.msg.innerText = "Mangler ressurser."; return; } gameState.resources[typeDef.costType] -= totalCost; updateUI(); for (let i = 0; i <= count; i++) { const factor = count === 0 ? 0 : i / count; const wx = start.x + dx * factor; const wy = start.y + dy * factor; const gridPos = snapToGrid(wx, wy); let blocked = false; gameState.worldObjects.forEach(obj => { if (dist(gridPos.x+16, gridPos.y+16, obj.x, obj.y) < 10) blocked = true; }); if (!blocked) { gameState.worldObjects.push({ id: Math.random().toString(36), type: 'wall', subType: gameState.buildMode, spriteId: typeDef.spriteId, x: gridPos.x+16, y: gridPos.y+16, w: 32, h: 32, hp: typeDef.hp, built: false, progress: 0, buildTime: typeDef.buildTime }); } } ui.msg.innerText = "Mur planlagt."; }
+function calculatePopulation() { let cap = 5; gameState.worldObjects.forEach(o => { if (o.type === 'building' && o.subType === 'HOUSE' && o.built) cap += o.popBonus; }); gameState.population.max = cap; gameState.population.current = gameState.workers.length + gameState.soldiers.length; updateUI(); }
+function updateCamera(dt) { const s = 500 * dt; if(gameState.keys.w) gameState.camera.y -= s; if(gameState.keys.s) gameState.camera.y += s; if(gameState.keys.a) gameState.camera.x -= s; if(gameState.keys.d) gameState.camera.x += s; gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, GameConfig.worldWidth - GameConfig.screenWidth)); gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, GameConfig.worldHeight - GameConfig.screenHeight)); }
+function getMouseWorldPos(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) + gameState.camera.x, y: (e.clientY - r.top) + gameState.camera.y }; }
+function updateUI() { ui.res.pop.innerText = `${gameState.population.current}/${gameState.population.max}`; ui.res.food.innerText = Math.floor(gameState.resources.food); ui.res.wood.innerText = Math.floor(gameState.resources.wood); ui.res.stone.innerText = Math.floor(gameState.resources.stone); ui.res.iron.innerText = Math.floor(gameState.resources.iron); ui.btns.trainArcher.disabled = !hasBuilding('BOWYER'); ui.btns.buildWall.disabled = !hasBuilding('MASON'); }
+
+// === LOGIKK ===
 function gameLoop(timestamp) {
     if (!gameState.lastTime) gameState.lastTime = timestamp;
     const dt = (timestamp - gameState.lastTime) / 1000;
@@ -254,60 +371,42 @@ function gameLoop(timestamp) {
 function update(dt) {
     updateCamera(dt);
     updateWave(dt);
+    updateProjectiles(dt);
+    updateEffects(dt);
     
     gameState.workers.forEach(w => updateWorker(w, dt));
     gameState.soldiers.forEach(s => updateSoldier(s, dt));
-    
-    // Oppdater fiender (baklengs)
     for (let i = gameState.enemies.length - 1; i >= 0; i--) { updateEnemy(gameState.enemies[i], dt, i); }
-    
     calculatePopulation();
 }
 
 function updateWave(dt) {
     gameState.wave.timer -= dt;
-    if (gameState.wave.timer <= 0) {
-        spawnWave(gameState.wave.number);
-        gameState.wave.number++;
-        gameState.wave.timer = GameConfig.waveInterval; // Reset timer
-    }
-    
-    // UI Update for timer
-    const m = Math.floor(gameState.wave.timer / 60);
-    const s = Math.floor(gameState.wave.timer % 60);
-    ui.wave.num.innerText = gameState.wave.number;
-    ui.wave.timer.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    if (gameState.wave.timer <= 0) { spawnWave(gameState.wave.number); gameState.wave.number++; gameState.wave.timer = GameConfig.waveInterval; }
+    const m = Math.floor(gameState.wave.timer / 60); const s = Math.floor(gameState.wave.timer % 60);
+    ui.wave.num.innerText = gameState.wave.number; ui.wave.timer.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
 }
 
 function spawnWave(waveNum) {
     ui.msg.innerText = `Bølge ${waveNum} angriper!`;
-    const count = 3 + Math.floor(waveNum * 2.5); // Økning
-    
+    const count = 3 + Math.floor(waveNum * 2.5);
     for (let i = 0; i < count; i++) {
-        // Spawn fra tilfeldig kant
-        let ex, ey;
-        const side = Math.floor(Math.random() * 4);
-        if (side === 0) { ex = randomRange(0, GameConfig.worldWidth); ey = -50; } // Nord
-        else if (side === 1) { ex = randomRange(0, GameConfig.worldWidth); ey = GameConfig.worldHeight + 50; } // Sør
-        else if (side === 2) { ex = -50; ey = randomRange(0, GameConfig.worldHeight); } // Vest
-        else { ex = GameConfig.worldWidth + 50; ey = randomRange(0, GameConfig.worldHeight); } // Øst
-        
-        gameState.enemies.push({
-            id: Math.random(), type: 'enemy', x: ex, y: ey, w: 32, h: 32, speed: 40, 
-            hp: 50 + (waveNum * 10), maxHp: 50 + (waveNum * 10), damage: 5 + waveNum,
-            state: 'MOVING', animState: 'walk', animFrame: 0, animTimer: 0, spriteId: 'enemy', attackTimer: 0
-        });
+        let ex, ey; const side = Math.floor(Math.random() * 4);
+        if (side === 0) { ex = randomRange(0, GameConfig.worldWidth); ey = -50; }
+        else if (side === 1) { ex = randomRange(0, GameConfig.worldWidth); ey = GameConfig.worldHeight + 50; }
+        else if (side === 2) { ex = -50; ey = randomRange(0, GameConfig.worldHeight); }
+        else { ex = GameConfig.worldWidth + 50; ey = randomRange(0, GameConfig.worldHeight); }
+        gameState.enemies.push({ id: Math.random(), type: 'enemy', x: ex, y: ey, w: 32, h: 32, speed: 40, hp: 50 + (waveNum * 10), maxHp: 50 + (waveNum * 10), damage: 5 + waveNum, state: 'MOVING', animState: 'walk', animFrame: 0, animTimer: 0, spriteId: 'enemy', attackTimer: 0 });
     }
 }
 
 function updateEnemy(e, dt, idx) {
     if (e.hp <= 0) { gameState.enemies.splice(idx, 1); return; }
-    
-    // AI: Gå mot Borgen, men angrip hindringer
+    if (e.flashTimer > 0) e.flashTimer -= dt; // Skade-effekt
+
     let target = gameState.keep;
     let action = 'MOVING';
     
-    // 1. Sjekk om soldater er nærme
     let nearSoldier = null;
     gameState.soldiers.forEach(s => { if(dist(e.x, e.y, s.x, s.y) < 100) nearSoldier = s; });
     if (nearSoldier) target = nearSoldier;
@@ -316,70 +415,112 @@ function updateEnemy(e, dt, idx) {
     const d = Math.sqrt(dx*dx + dy*dy);
     e.facingRight = dx > 0;
 
-    // 2. Sjekk kollisjon/angrep
     if (d < 40) {
         action = 'ATTACKING';
         e.attackTimer -= dt;
         if (e.attackTimer <= 0) {
             target.hp -= e.damage;
             e.attackTimer = 1.5;
-            if (target.type === 'soldier' && target.hp <= 0) {
-                // Drep soldat
-                const sIdx = gameState.soldiers.indexOf(target);
-                if (sIdx > -1) gameState.soldiers.splice(sIdx, 1);
-            }
-            if (target.type === 'building' && target.hp <= 0 && target.subType === 'keep') {
-                alert("GAME OVER - Borgen falt!"); location.reload();
-            }
+            spawnEffect((e.x+target.x)/2, (e.y+target.y)/2, 'slash');
+            if (target.type === 'soldier' && target.hp <= 0) { const sIdx = gameState.soldiers.indexOf(target); if (sIdx > -1) gameState.soldiers.splice(sIdx, 1); }
+            if (target.type === 'building' && target.hp <= 0 && target.subType === 'keep') { alert("GAME OVER!"); location.reload(); }
         }
     } else {
-        // Sjekk om mur blokkerer
         let wall = null;
-        gameState.worldObjects.forEach(o => {
-            if ((o.type==='wall'||o.type==='building') && o.built && dist(e.x, e.y, o.x, o.y) < 30) wall = o;
-        });
-        
+        gameState.worldObjects.forEach(o => { if ((o.type==='wall'||o.type==='building') && o.built && dist(e.x, e.y, o.x, o.y) < 30) wall = o; });
         if (wall) {
             action = 'ATTACKING';
             e.attackTimer -= dt;
             if (e.attackTimer <= 0) {
-                wall.hp -= e.damage;
-                e.attackTimer = 1.0;
-                if (wall.hp <= 0) {
-                    const wIdx = gameState.worldObjects.indexOf(wall);
-                    if (wIdx > -1) gameState.worldObjects.splice(wIdx, 1);
-                }
+                wall.hp -= e.damage; e.attackTimer = 1.0; spawnEffect((e.x+wall.x)/2, (e.y+wall.y)/2, 'slash');
+                if (wall.hp <= 0) { const wIdx = gameState.worldObjects.indexOf(wall); if (wIdx > -1) gameState.worldObjects.splice(wIdx, 1); }
             }
         } else {
-            // Bevegelse
             e.x += (dx/d)*e.speed*dt; e.y += (dy/d)*e.speed*dt;
         }
     }
-    
-    // Animasjon
-    e.animTimer += dt;
-    const def = Assets.definitions[e.spriteId];
-    e.animState = action === 'ATTACKING' ? 'attack' : 'walk';
+    e.animTimer += dt; const def = Assets.definitions[e.spriteId]; e.animState = action === 'ATTACKING' ? 'attack' : 'walk';
     if(e.animTimer >= (1/def.fps)) { e.animTimer=0; e.animFrame=(e.animFrame+1)%def.anims[e.animState].length; }
 }
 
-function updateWorker(w, dt) {
-    const isMoving = w.state === 'MOVING'; const isWorking = w.state === 'GATHERING' || w.state === 'BUILDING' || w.state === 'REPAIRING';
-    w.animState = isWorking ? 'work' : (isMoving ? 'walk' : 'idle');
-    const def = Assets.definitions[w.spriteId];
-    w.animTimer += dt; if (w.animTimer >= (1/def.fps)) { w.animTimer = 0; w.animFrame = (w.animFrame+1) % def.anims[w.animState].length; }
+function updateSoldier(s, dt) {
+    if (dist(s.x, s.y, gameState.keep.x, gameState.keep.y) < 150 && s.hp < s.maxHp) s.hp += 5 * dt;
+    if (s.cooldownTimer > 0) s.cooldownTimer -= dt;
 
-    if (w.state === 'IDLE') return;
+    // Kamp-logikk (Auto-scan)
+    let target = null;
+    let minDist = Infinity;
+    
+    // Hvis vi har et spesifikt angrepsmål, bruk det
+    if (s.jobType === 'ATTACK_TARGET' && s.target && s.target.hp > 0) {
+        target = s.target;
+        minDist = dist(s.x, s.y, target.x, target.y);
+    } else {
+        // Ellers scan etter nærmeste
+        gameState.enemies.forEach(e => {
+            const d = dist(s.x, s.y, e.x, e.y);
+            if (d < minDist) { minDist = d; target = e; }
+        });
+    }
 
-    if (w.state === 'MOVING') {
-        const dx = w.target.x - w.x; const dy = w.target.y - w.y;
+    let isAttacking = false;
+    
+    if (target && minDist <= s.stats.range) {
+        // Vi er i range! Stopp og skyt.
+        s.facingRight = target.x > s.x;
+        isAttacking = true;
+        
+        if (s.cooldownTimer <= 0) {
+            s.cooldownTimer = s.stats.cooldown;
+            
+            if (s.stats.projectile) {
+                spawnProjectile(s, target, s.stats.damage);
+            } else {
+                target.hp -= s.stats.damage;
+                target.flashTimer = 0.2; // Visuell skade
+                spawnEffect((s.x+target.x)/2, (s.y+target.y)/2, 'slash');
+            }
+        }
+    }
+
+    // Bevegelse (Kun hvis vi ikke angriper, eller hvis vi må gå nærmere)
+    if (!isAttacking && s.state === 'MOVING' && s.target) {
+        const tPos = s.target.x !== undefined ? s.target : s.target; // Håndter objekt eller {x,y}
+        const dx = tPos.x - s.x; const dy = tPos.y - s.y;
         const d = Math.sqrt(dx*dx + dy*dy);
-        if (d > 5) {
-            w.x += (dx/d)*w.speed*dt; w.y += (dy/d)*w.speed*dt; w.facingRight = dx > 0;
+        
+        // Stopp hvis fremme (eller i range hvis angrep)
+        const stopDist = (s.jobType === 'ATTACK_TARGET') ? s.stats.range - 10 : 5;
+
+        if (d > stopDist) {
+            s.x += (dx/d)*s.speed*dt; s.y += (dy/d)*s.speed*dt; s.facingRight = dx > 0;
         } else {
+            if (s.jobType === 'GARRISON' && s.target.type === 'wall') { s.garrisoned = true; s.state = 'IDLE'; }
+            else if (s.jobType !== 'ATTACK_TARGET') { s.state = 'IDLE'; }
+        }
+    } else if (isAttacking) {
+        // Stå i ro mens man angriper
+    }
+
+    // Animasjon
+    s.animState = isAttacking ? 'attack' : (s.state === 'MOVING' && !isAttacking ? 'walk' : 'idle');
+    const def = Assets.definitions[s.spriteId];
+    s.animTimer += dt; if (s.animTimer >= (1/def.fps)) { s.animTimer = 0; s.animFrame = (s.animFrame+1) % def.anims[s.animState].length; }
+}
+
+function updateWorker(w, dt) {
+    // (Samme logikk som før, forkortet for plass)
+    const isMoving = w.state === 'MOVING'; const isWorking = ['GATHERING','BUILDING','REPAIRING'].includes(w.state);
+    w.animState = isWorking ? 'work' : (isMoving ? 'walk' : 'idle');
+    const def = Assets.definitions[w.spriteId]; w.animTimer += dt; if (w.animTimer >= (1/def.fps)) { w.animTimer = 0; w.animFrame = (w.animFrame+1) % def.anims[w.animState].length; }
+    if (w.state === 'IDLE') return;
+    if (w.state === 'MOVING') {
+        const dx = w.target.x - w.x; const dy = w.target.y - w.y; const d = Math.sqrt(dx*dx + dy*dy);
+        if (d > 5) { w.x += (dx/d)*w.speed*dt; w.y += (dy/d)*w.speed*dt; w.facingRight = dx > 0; }
+        else {
             if (w.jobType === 'GATHER') { w.state = 'GATHERING'; w.gatherTimer = w.target.harvestTime; }
-            else if (w.jobType === 'BUILD') { w.state = 'BUILDING'; }
-            else if (w.jobType === 'REPAIR') { w.state = 'REPAIRING'; }
+            else if (w.jobType === 'BUILD') w.state = 'BUILDING';
+            else if (w.jobType === 'REPAIR') w.state = 'REPAIRING';
             else if (w.jobType === 'RETURN') w.state = 'DEPOSITING';
             else w.state = 'IDLE';
         }
@@ -391,20 +532,10 @@ function updateWorker(w, dt) {
             if (w.target.amount <= 0) { const idx = gameState.worldObjects.indexOf(w.target); if(idx>-1)gameState.worldObjects.splice(idx,1); w.target = null; }
             w.state = 'MOVING'; w.target = gameState.keep; w.jobType = 'RETURN'; w.lastResourcePos = { x: w.x, y: w.y, type: w.carryType };
         }
-    } 
-    else if (w.state === 'BUILDING') {
-        if (!w.target || w.target.built) {
-            const nextBuild = findNearbyBlueprint(w);
-            if (nextBuild) { w.target = nextBuild; w.state = 'MOVING'; w.jobType = 'BUILD'; } else w.state = 'IDLE';
-            return;
-        }
-        w.target.progress += (100 / w.target.buildTime) * dt;
-        if (w.target.progress >= 100) { w.target.progress = 100; w.target.built = true; }
     }
-    else if (w.state === 'REPAIRING') {
-        if (!w.target || w.target.hp >= w.target.maxHp) { w.state = 'IDLE'; return; }
-        w.target.hp += 20 * dt; // Reparer 20 HP i sekundet
-        if (w.target.hp > w.target.maxHp) w.target.hp = w.target.maxHp;
+    else if (w.state === 'BUILDING') {
+        if (!w.target || w.target.built) { const nb = findNearbyBlueprint(w); if(nb){w.target=nb; w.state='MOVING'; w.jobType='BUILD';} else w.state='IDLE'; return; }
+        w.target.progress += (100 / w.target.buildTime) * dt; if (w.target.progress >= 100) { w.target.progress = 100; w.target.built = true; }
     }
     else if (w.state === 'DEPOSITING') {
         gameState.resources[w.carryType] += w.carryAmount; w.carryAmount = 0; w.carryType = null;
@@ -414,53 +545,10 @@ function updateWorker(w, dt) {
             if (near && minDist < 300) { w.state = 'MOVING'; w.target = near; w.jobType = 'GATHER'; } else w.state = 'IDLE';
         } else w.state = 'IDLE';
     }
-}
-
-function updateSoldier(s, dt) {
-    // Healing logic
-    if (dist(s.x, s.y, gameState.keep.x, gameState.keep.y) < 150 && s.hp < s.maxHp) {
-        s.hp += 5 * dt; // 5 HP/sek regen ved borgen
+    else if (w.state === 'REPAIRING') {
+        if (!w.target || w.target.hp >= w.target.maxHp) { w.state = 'IDLE'; return; }
+        w.target.hp += 20 * dt; if (w.target.hp > w.target.maxHp) w.target.hp = w.target.maxHp;
     }
-
-    // Combat Logic
-    let target = null;
-    let minDist = Infinity;
-    gameState.enemies.forEach(e => {
-        const d = dist(s.x, s.y, e.x, e.y);
-        if (d < minDist) { minDist = d; target = e; }
-    });
-
-    if (target && minDist < s.stats.range) {
-        s.state = 'ATTACKING';
-        s.animState = 'attack';
-        s.facingRight = target.x > s.x;
-        
-        if (s.cooldownTimer <= 0) {
-            s.cooldownTimer = s.stats.cooldown;
-            target.hp -= s.stats.damage;
-        } else {
-            s.cooldownTimer -= dt;
-        }
-    } else {
-        // Ingen fiender, gå tilbake til idle eller bevegelse
-        if (s.state === 'ATTACKING') s.state = 'IDLE';
-    }
-
-    // Bevegelse
-    if (s.state === 'MOVING' && s.target) {
-        const dx = s.target.x - s.x; const dy = s.target.y - s.y;
-        const d = Math.sqrt(dx*dx + dy*dy);
-        if (d > 5) {
-            s.x += (dx/d)*s.speed*dt; s.y += (dy/d)*s.speed*dt; s.facingRight = dx > 0;
-            s.animState = 'walk';
-        } else {
-            if (s.jobType === 'GARRISON') { s.garrisoned = true; s.state = 'IDLE'; } else s.state = 'IDLE';
-        }
-    }
-
-    // Animasjon
-    const def = Assets.definitions[s.spriteId];
-    s.animTimer += dt; if (s.animTimer >= (1/def.fps)) { s.animTimer = 0; s.animFrame = (s.animFrame+1) % def.anims[s.animState].length; }
 }
 
 function findNearbyBlueprint(worker) {
@@ -469,21 +557,28 @@ function findNearbyBlueprint(worker) {
     return found;
 }
 
-// === UI & TECH TREE ===
-function hasBuilding(tech) { if (!tech) return true; return gameState.worldObjects.some(o => o.type === 'building' && o.tech === tech && o.built); }
-function attemptSetBuildMode(mode) { if (Buildings[mode].req && !hasBuilding(Buildings[mode].req)) { ui.msg.innerText = `Krever ${Buildings[Buildings[mode].req].name}!`; return; } setBuildMode(mode); }
-function attemptTrainSoldier(type) { if (UnitTypes[type].req && !hasBuilding(UnitTypes[type].req)) { ui.msg.innerText = `Krever ${Buildings[UnitTypes[type].req].name}!`; return; } convertWorkerToSoldier(type); }
-function attemptCreateWorker() { if (gameState.population.current >= gameState.population.max) { ui.msg.innerText = "Befolkningsgrense nådd!"; return; } if (gameState.resources.food >= 50) { gameState.resources.food -= 50; spawnWorker(gameState.keep.x, gameState.keep.y + 60); updateUI(); ui.msg.innerText = "Ny arbeider!"; } else ui.msg.innerText = "Mangler mat (50)."; }
-function convertWorkerToSoldier(type) { const def = UnitTypes[type]; let canAfford = true; for (let res in def.cost) if (gameState.resources[res] < def.cost[res]) canAfford = false; if (!canAfford) { ui.msg.innerText = "Mangler ressurser."; return; } let candidate = gameState.workers.find(w => w.state === 'IDLE'); if (!candidate) { ui.msg.innerText = "Ingen ledige arbeidere!"; return; } for (let res in def.cost) gameState.resources[res] -= def.cost[res]; const idx = gameState.workers.indexOf(candidate); gameState.workers.splice(idx, 1); spawnSoldier(def, candidate.x, candidate.y); updateUI(); ui.msg.innerText = `${def.name} klar!`; }
-function setBuildMode(mode) { gameState.buildMode = mode; gameState.dragStart = null; document.querySelectorAll('.game-btn').forEach(b => b.classList.remove('active')); ui.btnCancel.classList.add('hidden'); if (mode) { ui.msg.innerText = `BYGG: ${mode}.`; ui.btnCancel.classList.remove('hidden'); } }
-function snapToGrid(x, y) { return { x: Math.floor(x/GameConfig.tileSize)*GameConfig.tileSize, y: Math.floor(y/GameConfig.tileSize)*GameConfig.tileSize }; }
-function placeSingleBuilding(pos, type) { const def = Buildings[type]; if (gameState.resources[def.costType] < def.cost) { ui.msg.innerText = "Mangler ressurser."; return; } gameState.resources[def.costType] -= def.cost; updateUI(); gameState.worldObjects.push({ id: Math.random().toString(36), type: 'building', subType: type, x: pos.x+16, y: pos.y+16, w: 32, h: 32, spriteId: def.spriteId, hp: def.hp, maxHp: def.hp, built: false, progress: 0, buildTime: def.buildTime, popBonus: def.popBonus||0, tech: def.tech }); ui.msg.innerText = "Bygging startet."; }
-function placeWallBlueprints(start, end) { const typeDef = Buildings[gameState.buildMode]; const dx = end.x - start.x; const dy = end.y - start.y; const distVal = dist(0, 0, dx, dy); const count = Math.ceil(distVal / GameConfig.tileSize); if (count <= 0) return; const totalCost = count * typeDef.cost; if (gameState.resources[typeDef.costType] < totalCost) { ui.msg.innerText = "Mangler ressurser."; return; } gameState.resources[typeDef.costType] -= totalCost; updateUI(); for (let i = 0; i <= count; i++) { const factor = count === 0 ? 0 : i / count; const wx = start.x + dx * factor; const wy = start.y + dy * factor; const gridPos = snapToGrid(wx, wy); let blocked = false; gameState.worldObjects.forEach(obj => { if (dist(gridPos.x+16, gridPos.y+16, obj.x, obj.y) < 10) blocked = true; }); if (!blocked) { gameState.worldObjects.push({ id: Math.random().toString(36), type: 'wall', subType: gameState.buildMode, spriteId: typeDef.spriteId, x: gridPos.x+16, y: gridPos.y+16, w: 32, h: 32, hp: typeDef.hp, built: false, progress: 0, buildTime: typeDef.buildTime }); } } ui.msg.innerText = "Mur planlagt."; }
-function calculatePopulation() { let cap = 5; gameState.worldObjects.forEach(o => { if (o.type === 'building' && o.subType === 'HOUSE' && o.built) cap += o.popBonus; }); gameState.population.max = cap; gameState.population.current = gameState.workers.length + gameState.soldiers.length; updateUI(); }
-function updateCamera(dt) { const s = 500 * dt; if(gameState.keys.w) gameState.camera.y -= s; if(gameState.keys.s) gameState.camera.y += s; if(gameState.keys.a) gameState.camera.x -= s; if(gameState.keys.d) gameState.camera.x += s; gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, GameConfig.worldWidth - GameConfig.screenWidth)); gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, GameConfig.worldHeight - GameConfig.screenHeight)); }
-function selectEntity(wx, wy) { let f = null; [...gameState.workers, ...gameState.soldiers, ...gameState.enemies].forEach(u => { if(dist(wx, wy, u.x, u.y)<20) f=u; }); if(!f) gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y)<20) f=o; }); gameState.selectedEntity = f; ui.selection.innerText = f ? `${f.type} ${f.hp}/${f.maxHp||f.stats?.maxHp}` : "Ingen valgt"; }
-function getMouseWorldPos(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) + gameState.camera.x, y: (e.clientY - r.top) + gameState.camera.y }; }
-function updateUI() { ui.res.pop.innerText = `${gameState.population.current}/${gameState.population.max}`; ui.res.food.innerText = Math.floor(gameState.resources.food); ui.res.wood.innerText = Math.floor(gameState.resources.wood); ui.res.stone.innerText = Math.floor(gameState.resources.stone); ui.res.iron.innerText = Math.floor(gameState.resources.iron); ui.btns.trainArcher.disabled = !hasBuilding('BOWYER'); ui.btns.buildWall.disabled = !hasBuilding('MASON'); }
+// === EFFECTS & PROJECTILES ===
+function spawnProjectile(source, target, damage) {
+    gameState.projectiles.push({ x: source.x, y: source.y, target: target, damage: damage, speed: 250, active: true });
+}
+function updateProjectiles(dt) {
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const p = gameState.projectiles[i];
+        if (!p.active || p.target.hp <= 0) { gameState.projectiles.splice(i, 1); continue; }
+        const dx = p.target.x - p.x; const dy = p.target.y - p.y; const d = Math.sqrt(dx*dx + dy*dy);
+        if (d < 10) { 
+            p.target.hp -= p.damage; p.target.flashTimer = 0.2; p.active = false; 
+        } else {
+            p.x += (dx/d)*p.speed*dt; p.y += (dy/d)*p.speed*dt; p.angle = Math.atan2(dy, dx);
+        }
+    }
+}
+function spawnEffect(x, y, type) { gameState.effects.push({ x: x, y: y, type: type, life: 0.2 }); }
+function updateEffects(dt) {
+    for (let i = gameState.effects.length - 1; i >= 0; i--) {
+        const e = gameState.effects[i]; e.life -= dt; if (e.life <= 0) gameState.effects.splice(i, 1);
+    }
+}
 
 // === TEGNING ===
 function draw() {
@@ -498,6 +593,9 @@ function draw() {
         const isBlueprint = (obj.type === 'wall' || obj.type === 'building') && !obj.built;
         if (isBlueprint) ctx.globalAlpha = 0.5;
 
+        // Flash effect on hit
+        if (obj.flashTimer > 0) ctx.filter = "brightness(2.0)";
+
         if (obj.type === 'building' || obj.type === 'wall') {
             const img = Assets.sprites[obj.spriteId];
             if (img) ctx.drawImage(img, obj.x-16, obj.y-16);
@@ -506,7 +604,6 @@ function draw() {
                 ctx.fillStyle = "black"; ctx.fillRect(obj.x-16, obj.y-22, 32, 4);
                 ctx.fillStyle = "yellow"; ctx.fillRect(obj.x-16, obj.y-22, 32 * (obj.progress/100), 4);
             }
-            // HP Bar for buildings
             if (obj.built && obj.hp < obj.maxHp) {
                 ctx.fillStyle = "red"; ctx.fillRect(obj.x-16, obj.y-22, 32, 4);
                 ctx.fillStyle = "green"; ctx.fillRect(obj.x-16, obj.y-22, 32 * (obj.hp/obj.maxHp), 4);
@@ -522,17 +619,45 @@ function draw() {
             ctx.save(); ctx.translate(0, yOffset);
             drawSprite(obj);
             if (obj.carryType) { ctx.font="12px Arial"; const ic = obj.carryType==='wood'?'🌲':(obj.carryType==='stone'?'🪨':'🍖'); ctx.fillText(ic, obj.x, obj.y-20); }
-            if (gameState.selectedEntity === obj) { ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(obj.x, obj.y, 15, 0, Math.PI*2); ctx.stroke(); }
-            // Healing visual
+            
+            // Selection Circle
+            if (gameState.selectedUnits.includes(obj)) { 
+                ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(obj.x, obj.y, 15, 0, Math.PI*2); ctx.stroke(); 
+            }
+            
             if (dist(obj.x, obj.y, gameState.keep.x, gameState.keep.y) < 150 && obj.hp < (obj.maxHp || 100) && obj.type === 'soldier') {
                 ctx.fillStyle = "#2ecc71"; ctx.font="10px Arial"; ctx.fillText("++", obj.x+10, obj.y-10);
             }
             ctx.restore();
         }
         ctx.globalAlpha = 1.0;
+        ctx.filter = "none";
     });
 
-    if (gameState.buildMode && gameState.dragStart && gameState.buildMode !== 'HOUSE' && gameState.buildMode !== 'BOWYER' && gameState.buildMode !== 'MASON') {
+    // Projectiles
+    gameState.projectiles.forEach(p => {
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+        ctx.fillStyle = "#fff"; ctx.fillRect(-5, -1, 10, 2); ctx.fillStyle = "#aaa"; ctx.fillRect(2, -2, 3, 4);
+        ctx.restore();
+    });
+
+    // Effects
+    gameState.effects.forEach(e => {
+        if (e.type === 'slash') { ctx.strokeStyle = `rgba(255,255,255,${e.life*5})`; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(e.x, e.y, 15, 0, Math.PI*2); ctx.stroke(); }
+        if (e.type === 'click') { ctx.strokeStyle = `rgba(0,255,0,${e.life*5})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(e.x, e.y, 10 - (e.life*20), 0, Math.PI*2); ctx.stroke(); }
+    });
+
+    // Selection Box
+    if (gameState.selectionBox.active) {
+        ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 1; ctx.fillStyle = "rgba(0, 255, 0, 0.1)";
+        const w = gameState.selectionBox.curX - gameState.selectionBox.startX;
+        const h = gameState.selectionBox.curY - gameState.selectionBox.startY;
+        ctx.fillRect(gameState.selectionBox.startX, gameState.selectionBox.startY, w, h);
+        ctx.strokeRect(gameState.selectionBox.startX, gameState.selectionBox.startY, w, h);
+    }
+
+    // Build Preview
+    if (gameState.buildMode && gameState.dragStart && !['HOUSE','BOWYER','MASON'].includes(gameState.buildMode)) {
         const start = gameState.dragStart; const end = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
         ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(start.x + 16, start.y + 16); ctx.lineTo(end.x + 16, end.y + 16); ctx.stroke();
     }
@@ -540,6 +665,7 @@ function draw() {
         const pos = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
         ctx.globalAlpha = 0.5; const sprite = Buildings[gameState.buildMode].spriteId; if(Assets.sprites[sprite]) ctx.drawImage(Assets.sprites[sprite], pos.x, pos.y); ctx.globalAlpha = 1.0;
     }
+
     ctx.restore();
 }
 
@@ -549,13 +675,9 @@ function drawSprite(entity) {
     ctx.save(); ctx.translate(entity.x, entity.y); if (!entity.facingRight) ctx.scale(-1, 1);
     ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.ellipse(0, 10, 8, 4, 0, 0, Math.PI*2); ctx.fill();
     ctx.drawImage(img, sx, 0, def.w, def.h, -def.w/2, -def.h/2, def.w, def.h);
-    // HP Bar units
-    if (entity.hp < (entity.maxHp||100)) {
-        ctx.fillStyle = "red"; ctx.fillRect(-10, -20, 20, 4);
-        ctx.fillStyle = "#00ff00"; ctx.fillRect(-10, -20, 20 * (entity.hp/(entity.maxHp||100)), 4);
-    }
+    if (entity.hp < (entity.maxHp||100)) { ctx.fillStyle = "red"; ctx.fillRect(-10, -20, 20, 4); ctx.fillStyle = "#00ff00"; ctx.fillRect(-10, -20, 20 * (entity.hp/(entity.maxHp||100)), 4); }
     ctx.restore();
 }
 
 window.onload = init;
-/* Version: #22 */
+/* Version: #23 */
