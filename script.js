@@ -1,4 +1,4 @@
-/* Version: #20 - Auto-Builders, Garrison & Tech Tree */
+/* Version: #21 - Fix: Restore Worker Commands */
 
 // === HJELPEFUNKSJONER ===
 function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
@@ -76,7 +76,6 @@ const ui = {
     selection: document.getElementById('selection-info'),
     msg: document.getElementById('status-message'),
     btnCancel: document.getElementById('btn-cancel-action'),
-    // Knapper som må sjekkes for requirements
     btns: {
         trainArcher: document.getElementById('btn-train-archer'),
         buildWall: document.getElementById('btn-build-wall')
@@ -85,7 +84,7 @@ const ui = {
 
 // === INITIALISERING ===
 function init() {
-    console.log("Initialiserer Stronghold Update (v20)...");
+    console.log("Initialiserer Stronghold Update (v21 - Fix)...");
     generatePlaceholderSprites();
     createWorld();
     
@@ -134,7 +133,6 @@ function generatePlaceholderSprites() {
     createTile('spr_palisade', (x) => { x.fillStyle = "#5d4037"; for(let i=0;i<4;i++){x.fillRect(i*8,2,6,30);x.beginPath();x.moveTo(i*8,2);x.lineTo(i*8+3,0);x.lineTo(i*8+6,2);x.fill();} x.fillStyle = "rgba(0,0,0,0.3)"; x.fillRect(0,20,32,4); });
     createTile('spr_wall', (x) => { x.fillStyle = "#7f8c8d"; x.fillRect(0,0,32,32); x.strokeStyle="#555"; x.lineWidth=1; x.beginPath(); x.moveTo(0,10);x.lineTo(32,10);x.moveTo(0,20);x.lineTo(32,20);x.moveTo(10,0);x.lineTo(10,10);x.moveTo(20,10);x.lineTo(20,20);x.moveTo(10,20);x.lineTo(10,32);x.stroke(); });
     createTile('spr_house', (x) => { x.fillStyle = "#a1887f"; x.fillRect(4,12,24,20); x.fillStyle = "#5d4037"; x.beginPath(); x.moveTo(0,12); x.lineTo(16,0); x.lineTo(32,12); x.fill(); x.fillStyle = "#3e2723"; x.fillRect(12,22,8,10); });
-    // Tech Bygninger
     createTile('spr_bowyer', (x) => { x.fillStyle = "#e67e22"; x.fillRect(2,10,28,22); x.fillStyle = "#d35400"; x.beginPath(); x.moveTo(0,10); x.lineTo(16,0); x.lineTo(32,10); x.fill(); x.strokeStyle="#fff"; x.beginPath(); x.arc(16,20,6,-1,1); x.stroke(); });
     createTile('spr_mason', (x) => { x.fillStyle = "#95a5a6"; x.fillRect(2,10,28,22); x.fillStyle = "#7f8c8d"; x.beginPath(); x.moveTo(0,10); x.lineTo(16,0); x.lineTo(32,10); x.fill(); x.fillStyle="#fff"; x.font="10px Arial"; x.fillText("⚒️", 10, 25); });
 }
@@ -209,6 +207,44 @@ function setupInput() {
     ui.btnCancel.onclick = () => setBuildMode(null);
 }
 
+// === KOMMANDOER (Den manglende delen!) ===
+function handleWorkerCommand(w, wx, wy) {
+    let target = null;
+    gameState.worldObjects.forEach(o => { if(dist(wx, wy, o.x, o.y) < 25) target = o; });
+    
+    if (target) {
+        if (target.type === 'resource') {
+            w.state = 'MOVING'; w.target = target; w.jobType = 'GATHER';
+            ui.msg.innerText = "Samler ressurser.";
+        } else if ((target.type === 'wall' || target.type === 'building') && !target.built) {
+            w.state = 'MOVING'; w.target = target; w.jobType = 'BUILD';
+            ui.msg.innerText = "Går for å bygge.";
+        } else {
+            w.state = 'MOVING'; w.target = {x: wx, y: wy}; w.jobType = 'MOVE';
+            ui.msg.innerText = "Går.";
+        }
+    } else {
+        w.state = 'MOVING'; w.target = {x: wx, y: wy}; w.jobType = 'MOVE';
+        ui.msg.innerText = "Går.";
+    }
+}
+
+function handleSoldierCommand(s, wx, wy) {
+    let wall = null;
+    gameState.worldObjects.forEach(o => {
+        if ((o.type === 'wall') && o.built && dist(wx, wy, o.x, o.y) < 20) wall = o;
+    });
+
+    if (wall) {
+        s.target = wall; s.state = 'MOVING'; s.jobType = 'GARRISON';
+        ui.msg.innerText = "Går til post på mur.";
+    } else {
+        s.target = {x: wx, y: wy}; s.state = 'MOVING'; s.jobType = 'MOVE';
+        s.garrisoned = false;
+        ui.msg.innerText = "Soldat flytter seg.";
+    }
+}
+
 // === TECH TREE & CHECKS ===
 function hasBuilding(tech) {
     if (!tech) return true;
@@ -216,16 +252,12 @@ function hasBuilding(tech) {
 }
 
 function attemptSetBuildMode(mode) {
-    if (Buildings[mode].req && !hasBuilding(Buildings[mode].req)) {
-        ui.msg.innerText = `Krever ${Buildings[Buildings[mode].req].name}!`; return;
-    }
+    if (Buildings[mode].req && !hasBuilding(Buildings[mode].req)) { ui.msg.innerText = `Krever ${Buildings[Buildings[mode].req].name}!`; return; }
     setBuildMode(mode);
 }
 
 function attemptTrainSoldier(type) {
-    if (UnitTypes[type].req && !hasBuilding(UnitTypes[type].req)) {
-        ui.msg.innerText = `Krever ${Buildings[UnitTypes[type].req].name}!`; return;
-    }
+    if (UnitTypes[type].req && !hasBuilding(UnitTypes[type].req)) { ui.msg.innerText = `Krever ${Buildings[UnitTypes[type].req].name}!`; return; }
     convertWorkerToSoldier(type);
 }
 
@@ -355,14 +387,13 @@ function updateWorker(w, dt) {
     } 
     else if (w.state === 'BUILDING') {
         if (!w.target || w.target.built) {
-            // AUTOMATISK BYGGING: Finn neste jobb!
             const nextBuild = findNearbyBlueprint(w);
             if (nextBuild) { w.target = nextBuild; w.state = 'MOVING'; w.jobType = 'BUILD'; }
             else { w.state = 'IDLE'; }
             return;
         }
         w.target.progress += (100 / w.target.buildTime) * dt;
-        if (w.target.progress >= 100) { w.target.progress = 100; w.target.built = true; } // Ferdig, loopen over finner neste
+        if (w.target.progress >= 100) { w.target.progress = 100; w.target.built = true; }
     }
     else if (w.state === 'DEPOSITING') {
         gameState.resources[w.carryType] += w.carryAmount; w.carryAmount = 0; w.carryType = null;
@@ -385,27 +416,6 @@ function findNearbyBlueprint(worker) {
     return found;
 }
 
-function handleSoldierCommand(s, wx, wy) {
-    // Sjekk om vi klikket på en mur (GARRISON)
-    let wall = null;
-    gameState.worldObjects.forEach(o => {
-        if ((o.type === 'wall') && o.built && dist(wx, wy, o.x, o.y) < 20) wall = o;
-    });
-
-    if (wall) {
-        s.target = wall;
-        s.state = 'MOVING';
-        s.jobType = 'GARRISON';
-        ui.msg.innerText = "Går til post på mur.";
-    } else {
-        s.target = {x: wx, y: wy};
-        s.state = 'MOVING';
-        s.jobType = 'MOVE';
-        s.garrisoned = false; // Forlater post
-        ui.msg.innerText = "Soldat flytter seg.";
-    }
-}
-
 function updateSoldier(s, dt) {
     const isMoving = s.state === 'MOVING';
     s.animState = isMoving ? 'walk' : 'idle';
@@ -418,13 +428,8 @@ function updateSoldier(s, dt) {
         if (d > 5) {
             s.x += (dx/d)*s.speed*dt; s.y += (dy/d)*s.speed*dt; s.facingRight = dx > 0;
         } else {
-            // Fremme
-            if (s.jobType === 'GARRISON' && s.target.type === 'wall') {
-                s.garrisoned = true;
-                s.state = 'IDLE';
-            } else {
-                s.state = 'IDLE';
-            }
+            if (s.jobType === 'GARRISON' && s.target.type === 'wall') { s.garrisoned = true; s.state = 'IDLE'; }
+            else { s.state = 'IDLE'; }
         }
     }
 }
@@ -435,10 +440,6 @@ function draw() {
     ctx.save(); ctx.translate(-gameState.camera.x, -gameState.camera.y);
 
     ctx.fillStyle = "#2ecc71"; ctx.fillRect(0,0,GameConfig.worldWidth,GameConfig.worldHeight);
-    
-    // Sorter objekter: Murer og bygninger først, så enheter
-    // Men: Hvis en soldat er GARRISONED, skal han tegnes ETTER muren.
-    // Løsning: Tegn alt i Y-rekkefølge, men modifiser Y til soldater på mur visuelt
     
     const allObjects = [...gameState.worldObjects, ...gameState.workers, ...gameState.soldiers];
     allObjects.sort((a,b) => a.y - b.y);
@@ -462,11 +463,8 @@ function draw() {
             ctx.fillStyle="#fff"; ctx.fillRect(obj.x-10, obj.y+15, 20*p, 3);
         } 
         else if (obj.type === 'worker' || obj.type === 'soldier') {
-            // Hvis soldat på mur: Tegn litt høyere opp (Y-offset)
             const yOffset = obj.garrisoned ? -12 : 0;
-            
-            ctx.save();
-            ctx.translate(0, yOffset);
+            ctx.save(); ctx.translate(0, yOffset);
             drawSprite(obj);
             if (obj.carryType) { ctx.font="12px Arial"; const ic = obj.carryType==='wood'?'🌲':(obj.carryType==='stone'?'🪨':'🍖'); ctx.fillText(ic, obj.x, obj.y-20); }
             if (gameState.selectedEntity === obj) { ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(obj.x, obj.y, 15, 0, Math.PI*2); ctx.stroke(); }
@@ -517,11 +515,9 @@ function updateUI() {
     ui.res.wood.innerText = Math.floor(gameState.resources.wood);
     ui.res.stone.innerText = Math.floor(gameState.resources.stone);
     ui.res.iron.innerText = Math.floor(gameState.resources.iron);
-    
-    // Oppdater knapper status (Disable hvis man mangler tech)
     ui.btns.trainArcher.disabled = !hasBuilding('BOWYER');
     ui.btns.buildWall.disabled = !hasBuilding('MASON');
 }
 
 window.onload = init;
-/* Version: #20 */
+/* Version: #21 */
