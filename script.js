@@ -1,4 +1,8 @@
-/* Version: #17 - Stick Figures & Wall Building */
+/* Version: #18 - Fixes & Wall Graphics */
+
+// === HJELPEFUNKSJONER (Flyttet til toppen for å unngå feil) ===
+function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
+function randomRange(min, max) { return Math.random() * (max - min) + min; }
 
 // === KONFIGURASJON ===
 const GameConfig = {
@@ -6,7 +10,7 @@ const GameConfig = {
     screenHeight: 600,
     worldWidth: 2000,
     worldHeight: 2000,
-    tileSize: 32, // Grid størrelse for bygging
+    tileSize: 32, // Grid størrelse
     debugMode: false
 };
 
@@ -18,11 +22,11 @@ const ResourceTypes = {
 };
 
 const Buildings = {
-    PALISADE: { name: "Palisade", costType: 'wood', cost: 5, hp: 100, color: '#8d6e63' },
-    WALL:     { name: "Steinmur", costType: 'stone', cost: 5, hp: 300, color: '#7f8c8d' }
+    PALISADE: { name: "Palisade", costType: 'wood', cost: 5, hp: 100, spriteId: 'spr_palisade' },
+    WALL:     { name: "Steinmur", costType: 'stone', cost: 5, hp: 300, spriteId: 'spr_wall' }
 };
 
-// === ASSETS (STICK FIGURES) ===
+// === ASSETS ===
 const Assets = {
     sprites: {},
     definitions: {
@@ -32,7 +36,7 @@ const Assets = {
 
 // === SPILL-TILSTAND ===
 let gameState = {
-    resources: { food: 100, wood: 100, stone: 50, iron: 0 },
+    resources: { food: 100, wood: 100, stone: 100, iron: 0 },
     camera: { x: 500, y: 500 },
     
     worldObjects: [], 
@@ -43,9 +47,9 @@ let gameState = {
     selectedEntity: null,
     keys: { w: false, a: false, s: false, d: false },
     
-    buildMode: null, // 'PALISADE', 'WALL' eller null
-    dragStart: null, // {x, y} i verdenskoordinater
-    mouseWorld: { x: 0, y: 0 }, // Musens posisjon i verden akkurat nå
+    buildMode: null, // 'PALISADE', 'WALL'
+    dragStart: null, 
+    mouseWorld: { x: 0, y: 0 },
     
     lastTime: 0
 };
@@ -67,11 +71,11 @@ const btnCancel = document.getElementById('btn-cancel-action');
 
 // === INITIALISERING ===
 function init() {
-    console.log("Initialiserer RTS Fase 2...");
+    console.log("Initialiserer RTS Fase 2 (v18)...");
     generatePlaceholderSprites();
     createWorld();
     
-    // Start med 2 arbeidere
+    // Start-arbeidere
     spawnWorker(gameState.keep.x + 50, gameState.keep.y + 50);
     spawnWorker(gameState.keep.x - 50, gameState.keep.y + 50);
     
@@ -80,47 +84,63 @@ function init() {
     requestAnimationFrame(gameLoop);
 }
 
-// === GRAFIKK GENERATOR (STICK FIGURES) ===
+// === GRAFIKK GENERATOR ===
 function generatePlaceholderSprites() {
+    // 1. Worker Sprite (Stick figure)
     const createSheet = (id, color, size) => {
-        const c = document.createElement('canvas');
-        c.width = size * 8; c.height = size;
+        const c = document.createElement('canvas'); c.width = size * 8; c.height = size;
         const x = c.getContext('2d');
-        
         const drawFrame = (idx, legOff, armAction) => {
             const ox = idx * size; const cx = ox + size/2; const cy = size/2;
             x.fillStyle = color; x.strokeStyle = color; x.lineWidth = 2;
-            // Hode
             x.beginPath(); x.arc(cx, cy - (size*0.25), size*0.15, 0, Math.PI*2); x.fill();
-            // Kropp
             x.beginPath(); x.moveTo(cx, cy - (size*0.1)); x.lineTo(cx, cy + (size*0.2)); x.stroke();
-            // Ben
             x.beginPath(); x.moveTo(cx, cy + (size*0.2)); x.lineTo(cx - (size*0.1) + legOff, cy + (size*0.45));
             x.moveTo(cx, cy + (size*0.2)); x.lineTo(cx + (size*0.1) - legOff, cy + (size*0.45)); x.stroke();
-            // Armer
             x.beginPath();
-            if (armAction) { // Jobber (Hugger/Bærer)
-                x.moveTo(cx, cy); x.lineTo(cx + (size*0.3), cy - (size*0.1)); 
-                x.moveTo(cx, cy); x.lineTo(cx + (size*0.3), cy + (size*0.1));
-            } else {
-                x.moveTo(cx, cy); x.lineTo(cx - (size*0.15), cy + (size*0.15) - legOff);
-                x.moveTo(cx, cy); x.lineTo(cx + (size*0.15), cy + (size*0.15) + legOff);
-            }
+            if (armAction) { x.moveTo(cx, cy); x.lineTo(cx + (size*0.3), cy - (size*0.1)); x.moveTo(cx, cy); x.lineTo(cx + (size*0.3), cy + (size*0.1)); }
+            else { x.moveTo(cx, cy); x.lineTo(cx - (size*0.15), cy + (size*0.15) - legOff); x.moveTo(cx, cy); x.lineTo(cx + (size*0.15), cy + (size*0.15) + legOff); }
             x.stroke();
         };
-
-        // Idle
         drawFrame(0, 0, false);
-        // Walk
         drawFrame(1, -5, false); drawFrame(2, 0, false); drawFrame(3, 5, false); drawFrame(4, 0, false);
-        // Work
         drawFrame(5, 0, true); drawFrame(6, 0, true);
-
-        const img = new Image(); img.src = c.toDataURL();
-        Assets.sprites[id] = img;
+        const img = new Image(); img.src = c.toDataURL(); Assets.sprites[id] = img;
     };
-    // Gul arbeider
     createSheet('worker', '#f1c40f', 32);
+
+    // 2. Vegg Teksturer (NYTT)
+    const createTile = (id, drawFn) => {
+        const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+        const x = c.getContext('2d');
+        drawFn(x);
+        const img = new Image(); img.src = c.toDataURL(); Assets.sprites[id] = img;
+    };
+
+    // Palisade (Brune stokker)
+    createTile('spr_palisade', (x) => {
+        x.fillStyle = "#5d4037"; 
+        // Tegn 4 stokker
+        for(let i=0; i<4; i++) {
+            x.fillRect(i*8, 2, 6, 30); // Stokk
+            x.beginPath(); x.moveTo(i*8, 2); x.lineTo(i*8+3, 0); x.lineTo(i*8+6, 2); x.fill(); // Spiss
+        }
+        x.fillStyle = "rgba(0,0,0,0.3)"; x.fillRect(0, 20, 32, 4); // Tverrbjelke
+    });
+
+    // Steinmur (Grå murstein)
+    createTile('spr_wall', (x) => {
+        x.fillStyle = "#7f8c8d"; x.fillRect(0,0,32,32);
+        x.strokeStyle = "#555"; x.lineWidth = 1;
+        // Tegn mønster
+        x.beginPath();
+        x.moveTo(0, 10); x.lineTo(32, 10);
+        x.moveTo(0, 20); x.lineTo(32, 20);
+        x.moveTo(10, 0); x.lineTo(10, 10);
+        x.moveTo(20, 10); x.lineTo(20, 20);
+        x.moveTo(10, 20); x.lineTo(10, 32);
+        x.stroke();
+    });
 }
 
 // === VERDEN ===
@@ -131,12 +151,10 @@ function createWorld() {
     };
     gameState.worldObjects.push(gameState.keep);
     
-    // Senter kamera
     gameState.camera.x = gameState.keep.x - GameConfig.screenWidth/2;
     gameState.camera.y = gameState.keep.y - GameConfig.screenHeight/2;
 
     const cy = GameConfig.worldHeight/2;
-    // Ressurser
     for(let i=0; i<60; i++) spawnResource(ResourceTypes.TREE, randomRange(0, 2000), randomRange(cy-300, 2000));
     for(let i=0; i<20; i++) spawnResource(ResourceTypes.STONE, randomRange(1200, 2000), randomRange(cy+200, 2000));
     for(let i=0; i<30; i++) spawnResource(ResourceTypes.BERRY, randomRange(600, 1400), randomRange(cy, cy+500));
@@ -155,7 +173,6 @@ function spawnWorker(x, y) {
         id: Math.random().toString(36).substr(2,9), type: 'worker', name: 'Arbeider',
         x: x, y: y, w: 32, h: 32, speed: 90,
         state: 'IDLE', target: null, carryType: null, carryAmount: 0, maxCarry: 10, gatherTimer: 0,
-        // Animasjon
         spriteId: 'worker', animState: 'idle', animFrame: 0, animTimer: 0, facingRight: true
     });
 }
@@ -165,15 +182,12 @@ function setupInput() {
     canvas.addEventListener('mousedown', (e) => {
         const mouse = getMouseWorldPos(e);
         
-        // HVIS BYGGEMODUS: Start å dra
         if (gameState.buildMode) {
             if (e.button === 0) {
                 gameState.dragStart = snapToGrid(mouse.x, mouse.y);
             }
-            return; // Ikke velg enheter mens vi bygger
+            return;
         }
-
-        // Ellers: Velg enhet
         if (e.button === 0) selectEntity(mouse.x, mouse.y);
     });
 
@@ -182,24 +196,22 @@ function setupInput() {
     });
 
     canvas.addEventListener('mouseup', (e) => {
-        // HVIS BYGGEMODUS: Fullfør mur
         if (gameState.buildMode && gameState.dragStart) {
             const end = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
             completeWallBuild(gameState.dragStart, end);
-            gameState.dragStart = null; // Reset drag, men behold modus for å bygge mer
+            gameState.dragStart = null;
         }
     });
 
     canvas.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (gameState.buildMode) return; // Ingen høyreklikk i byggemodus
+        if (gameState.buildMode) return;
         const mouse = getMouseWorldPos(e);
         if (gameState.selectedEntity && gameState.selectedEntity.type === 'worker') {
             handleWorkerCommand(gameState.selectedEntity, mouse.x, mouse.y);
         }
     });
 
-    // Tastatur
     window.addEventListener('keydown', (e) => {
         if(e.key==='w') gameState.keys.w=true; if(e.key==='a') gameState.keys.a=true;
         if(e.key==='s') gameState.keys.s=true; if(e.key==='d') gameState.keys.d=true;
@@ -210,7 +222,6 @@ function setupInput() {
         if(e.key==='s') gameState.keys.s=false; if(e.key==='d') gameState.keys.d=false;
     });
 
-    // UI Knapper
     document.getElementById('btn-create-worker').onclick = () => {
         if (gameState.resources.food >= 50) {
             gameState.resources.food -= 50;
@@ -224,17 +235,14 @@ function setupInput() {
     btnCancel.onclick = () => setBuildMode(null);
 }
 
-// === BYGGESYSTEM ===
 function setBuildMode(mode) {
     gameState.buildMode = mode;
     gameState.dragStart = null;
-    
-    // Reset knapper
     document.querySelectorAll('.game-btn').forEach(b => b.classList.remove('active'));
     btnCancel.classList.add('hidden');
 
     if (mode) {
-        uiMessage.innerText = `BYGGEMODUS: ${mode}. Klikk og dra for å bygge. ESC for å avbryte.`;
+        uiMessage.innerText = `BYGGEMODUS: ${mode}. Dra for å bygge.`;
         btnCancel.classList.remove('hidden');
         if(mode==='PALISADE') document.getElementById('btn-build-palisade').classList.add('active');
         if(mode==='WALL') document.getElementById('btn-build-wall').classList.add('active');
@@ -252,39 +260,29 @@ function snapToGrid(x, y) {
 
 function completeWallBuild(start, end) {
     const typeDef = Buildings[gameState.buildMode];
-    
-    // Beregn antall segmenter
     const dx = end.x - start.x;
     const dy = end.y - start.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    const count = Math.ceil(dist / GameConfig.tileSize); // Antall vegger
+    const distVal = dist(0, 0, dx, dy); // Bruker dist funksjonen nå (den er trygg)
+    const count = Math.ceil(distVal / GameConfig.tileSize);
 
     if (count <= 0) return;
 
     const totalCost = count * typeDef.cost;
-    
-    // Sjekk råd
     if (gameState.resources[typeDef.costType] < totalCost) {
         uiMessage.innerText = `Mangler ressurser! Trenger ${totalCost} ${typeDef.costType}.`;
         return;
     }
 
-    // Trekk ressurser
     gameState.resources[typeDef.costType] -= totalCost;
     updateUI();
-    uiMessage.innerText = `Bygget ${count} ${typeDef.name} for ${totalCost} ressurser.`;
+    uiMessage.innerText = `Bygget ${count} ${typeDef.name}.`;
 
-    // Plasser vegger
     for (let i = 0; i <= count; i++) {
-        // Interpoler posisjon
         const factor = count === 0 ? 0 : i / count;
         const wx = start.x + dx * factor;
         const wy = start.y + dy * factor;
-        
-        // Snap hver del til grid
         const gridPos = snapToGrid(wx, wy);
 
-        // Enkel kollisjonssjekk: Ikke bygg oppå borgen eller ressurser
         let blocked = false;
         gameState.worldObjects.forEach(obj => {
             if (dist(gridPos.x, gridPos.y, obj.x, obj.y) < 20) blocked = true;
@@ -294,11 +292,11 @@ function completeWallBuild(start, end) {
             gameState.worldObjects.push({
                 id: Math.random().toString(36),
                 type: 'wall',
-                subType: gameState.buildMode, // 'PALISADE' el 'WALL'
-                x: gridPos.x + GameConfig.tileSize/2, // Sentrer i tile
+                subType: gameState.buildMode,
+                spriteId: typeDef.spriteId, // Referanse til bildet
+                x: gridPos.x + GameConfig.tileSize/2,
                 y: gridPos.y + GameConfig.tileSize/2,
                 w: GameConfig.tileSize, h: GameConfig.tileSize,
-                color: typeDef.color,
                 hp: typeDef.hp
             });
         }
@@ -329,7 +327,6 @@ function updateCamera(dt) {
 }
 
 function updateWorker(w, dt) {
-    // Animasjon
     const isMoving = w.state === 'MOVING';
     const isWorking = w.state === 'GATHERING';
     
@@ -374,7 +371,6 @@ function updateWorker(w, dt) {
     } else if (w.state === 'DEPOSITING') {
         gameState.resources[w.carryType] += w.carryAmount;
         w.carryAmount = 0; w.carryType = null; updateUI();
-        // Finn ny ressurs
         if (w.lastResourcePos) {
             let near = null, minDist = Infinity;
             gameState.worldObjects.forEach(o => {
@@ -398,12 +394,11 @@ function draw() {
     // Bakke
     ctx.fillStyle = "#2ecc71"; ctx.fillRect(0,0,GameConfig.worldWidth,GameConfig.worldHeight);
     
-    // Grid (svakt)
+    // Grid
     ctx.strokeStyle = "rgba(0,0,0,0.05)"; ctx.lineWidth=1;
     for(let x=0; x<GameConfig.worldWidth; x+=32) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,GameConfig.worldHeight); ctx.stroke(); }
     for(let y=0; y<GameConfig.worldHeight; y+=32) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(GameConfig.worldWidth,y); ctx.stroke(); }
 
-    // Objekter (Sorter etter Y for dybde)
     const allObjects = [...gameState.worldObjects, ...gameState.workers];
     allObjects.sort((a,b) => a.y - b.y);
 
@@ -414,7 +409,6 @@ function draw() {
             ctx.fillStyle="#fff"; ctx.font="14px Arial"; ctx.textAlign="center"; ctx.fillText("BORG", obj.x, obj.y);
         } else if (obj.type === 'resource') {
             ctx.font="24px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(obj.icon, obj.x, obj.y);
-            // Bar
             const p = obj.amount/obj.capacity; ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(obj.x-10, obj.y+15, 20, 3);
             ctx.fillStyle="#fff"; ctx.fillRect(obj.x-10, obj.y+15, 20*p, 3);
         } else if (obj.type === 'worker') {
@@ -427,19 +421,18 @@ function draw() {
                 ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(obj.x, obj.y, 15, 0, Math.PI*2); ctx.stroke();
             }
         } else if (obj.type === 'wall') {
-            ctx.fillStyle = obj.color; 
-            // Tegn murstein/palisade look
-            ctx.fillRect(obj.x-obj.w/2, obj.y-obj.h/2, obj.w, obj.h);
-            ctx.strokeStyle = "#000"; ctx.lineWidth=1;
-            ctx.strokeRect(obj.x-obj.w/2, obj.y-obj.h/2, obj.w, obj.h);
-            // Detaljer
-            if (obj.subType === 'PALISADE') {
-                ctx.beginPath(); ctx.moveTo(obj.x, obj.y-obj.h/2); ctx.lineTo(obj.x, obj.y+obj.h/2); ctx.stroke();
+            // TEGN GRAFIKK FOR VEGG
+            const img = Assets.sprites[obj.spriteId];
+            if (img) {
+                // Tegn bildet sentrert
+                ctx.drawImage(img, obj.x - 16, obj.y - 16);
+            } else {
+                // Fallback hvis bildet mangler
+                ctx.fillStyle = "pink"; ctx.fillRect(obj.x-16, obj.y-16, 32, 32);
             }
         }
     });
 
-    // TEGN "GHOST WALL" (PREVIEW) HVIS VI DRAR
     if (gameState.buildMode && gameState.dragStart) {
         const start = gameState.dragStart;
         const end = snapToGrid(gameState.mouseWorld.x, gameState.mouseWorld.y);
@@ -448,10 +441,9 @@ function draw() {
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(start.x + 16, start.y + 16); ctx.lineTo(end.x + 16, end.y + 16); ctx.stroke();
         
-        // Vis kostnad ved musen
         const dx = end.x - start.x; const dy = end.y - start.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        const count = Math.ceil(dist / GameConfig.tileSize);
+        const dVal = dist(0, 0, dx, dy);
+        const count = Math.ceil(dVal / GameConfig.tileSize);
         const cost = count * Buildings[gameState.buildMode].cost;
         
         ctx.fillStyle = "#fff"; ctx.font = "14px Arial";
@@ -477,7 +469,7 @@ function drawSprite(entity) {
     ctx.restore();
 }
 
-// === HJELP ===
+// === UI ===
 function getMouseWorldPos(e) {
     const r = canvas.getBoundingClientRect();
     return { x: (e.clientX - r.left) + gameState.camera.x, y: (e.clientY - r.top) + gameState.camera.y };
@@ -495,8 +487,6 @@ function handleWorkerCommand(w, wx, wy) {
     if(res) { w.state='MOVING'; w.target=res; w.jobType='GATHER'; uiMessage.innerText="Samler ressurser."; }
     else { w.state='MOVING'; w.target={x: wx, y: wy}; w.jobType='MOVE'; uiMessage.innerText="Går."; }
 }
-function dist(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
-function randomRange(min, max) { return Math.random() * (max - min) + min; }
 function updateUI() {
     uiResources.food.innerText = Math.floor(gameState.resources.food);
     uiResources.wood.innerText = Math.floor(gameState.resources.wood);
@@ -505,4 +495,4 @@ function updateUI() {
 }
 
 window.onload = init;
-/* Version: #17 */
+/* Version: #18 */
