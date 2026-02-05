@@ -1,10 +1,10 @@
-<!-- Version: #17 -->
+<!-- Version: #18 -->
 <!DOCTYPE html>
 <html lang="no">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Borg Bygger - Fase 3</title>
+    <title>Borg Bygger - Stronghold Update</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -26,28 +26,33 @@
         <div id="canvas-container">
             <canvas id="gameCanvas" width="1000" height="600"></canvas>
             <div id="overlay-ui">
-                <p id="status-message">Velkommen! Bygg hus for å øke befolkningen. Arbeidere må bygge strukturene.</p>
+                <p id="status-message">Velkommen! Bygg 'Bueskytterverksted' for å få bueskyttere.</p>
             </div>
         </div>
 
         <!-- Handlingspanel -->
         <div id="action-panel">
             <div class="panel-section">
-                <h3>Sivil</h3>
+                <h3>Sivil & Økonomi</h3>
                 <button id="btn-create-worker" class="game-btn">Arbeider (50 Mat)</button>
                 <button id="btn-build-house" class="game-btn" style="background-color: #e67e22;">Hus (20 Tre)</button>
+                <button id="btn-build-bowyer" class="game-btn">Bueskytterverksted (50 Tre)</button>
+                <button id="btn-build-mason" class="game-btn">Steinhuggeri (50 Tre)</button>
             </div>
+            
             <div class="panel-section">
-                <h3>Militær (Krever Arbeider)</h3>
-                <button id="btn-train-peasant" class="game-btn">Tren Fotsoldat (Mat)</button>
-                <button id="btn-train-archer" class="game-btn">Tren Bueskytter (Mat+Tre)</button>
-                <button id="btn-train-knight" class="game-btn">Tren Ridder (Mat+Jern)</button>
+                <h3>Militær</h3>
+                <button id="btn-train-peasant" class="game-btn">Fotsoldat (Mat)</button>
+                <button id="btn-train-archer" class="game-btn">Bueskytter (Mat+Tre)</button>
+                <button id="btn-train-knight" class="game-btn">Ridder (Mat+Jern)</button>
             </div>
+            
             <div class="panel-section">
                 <h3>Forsvarsverk</h3>
                 <button id="btn-build-palisade" class="game-btn">Trepalisade (5 Tre)</button>
                 <button id="btn-build-wall" class="game-btn">Steinmur (5 Stein)</button>
             </div>
+            
             <div class="panel-section">
                 <h3>Info</h3>
                 <div id="selection-info">Ingen valgt</div>
@@ -59,4 +64,4 @@
     <script src="script.js"></script>
 </body>
 </html>
-<!-- Version: #17 -->
+<!-- Version: #18 -->
