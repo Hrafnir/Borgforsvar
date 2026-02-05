@@ -1,20 +1,23 @@
-<!-- Version: #18 -->
+<!-- Version: #19 -->
 <!DOCTYPE html>
 <html lang="no">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Borg Bygger - Stronghold Update</title>
+    <title>Borg Bygger - Combat Update</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
     <div id="game-wrapper">
+        <!-- Wave Timer & Stats -->
+        <div id="top-info-bar">
+            <div id="wave-info">Bølge <span id="wave-num">1</span> om <span id="wave-timer">02:00</span></div>
+        </div>
+
         <!-- Ressurs Bar -->
         <div id="resource-bar">
-            <div class="res-item" title="Befolkning / Kapasitet">
-                👥 <span id="res-pop">0/5</span>
-            </div>
+            <div class="res-item" title="Befolkning">👥 <span id="res-pop">0/5</span></div>
             <div class="res-divider"></div>
             <div class="res-item" title="Mat">🍖 <span id="res-food">0</span></div>
             <div class="res-item" title="Treverk">🌲 <span id="res-wood">0</span></div>
@@ -26,14 +29,14 @@
         <div id="canvas-container">
             <canvas id="gameCanvas" width="1000" height="600"></canvas>
             <div id="overlay-ui">
-                <p id="status-message">Velkommen! Bygg 'Bueskytterverksted' for å få bueskyttere.</p>
+                <p id="status-message">Forbered deg! Fienden kommer om 2 minutter. Bygg murer og tren soldater.</p>
             </div>
         </div>
 
         <!-- Handlingspanel -->
         <div id="action-panel">
             <div class="panel-section">
-                <h3>Sivil & Økonomi</h3>
+                <h3>Sivil</h3>
                 <button id="btn-create-worker" class="game-btn">Arbeider (50 Mat)</button>
                 <button id="btn-build-house" class="game-btn" style="background-color: #e67e22;">Hus (20 Tre)</button>
                 <button id="btn-build-bowyer" class="game-btn">Bueskytterverksted (50 Tre)</button>
@@ -64,4 +67,4 @@
     <script src="script.js"></script>
 </body>
 </html>
-<!-- Version: #18 -->
+<!-- Version: #19 -->
